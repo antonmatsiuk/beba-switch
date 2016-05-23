@@ -45,6 +45,14 @@ OFP_ASSERT(sizeof(struct ofp_exp_instruction_in_switch_pkt_gen) == 24);
 
 /****************************************************************
  *
+ * OpenFlow experimenter Reactions
+ *
+ ****************************************************************/
+enum ofp_reaction_type {
+    OFP_EXP_INSTRUCTION = 1       /* Execute an experimental instruction*/
+};
+/****************************************************************
+ *
  * OpenFlow experimenter Actions
  *
  ****************************************************************/
@@ -198,10 +206,10 @@ enum ofp_exp_msg_state_mod_commands {
     OFPSC_STATEFUL_TABLE_CONFIG = 0,
     OFPSC_EXP_SET_L_EXTRACTOR,
     OFPSC_EXP_SET_U_EXTRACTOR,
-    OFPSC_EXP_SET_FLOW_STATE,   
+    OFPSC_EXP_SET_FLOW_STATE,
     OFPSC_EXP_DEL_FLOW_STATE,
     OFPSC_EXP_SET_GLOBAL_STATE,
-    OFPSC_EXP_RESET_GLOBAL_STATE   
+    OFPSC_EXP_RESET_GLOBAL_STATE
 };
 
 /****************************************************************
@@ -240,7 +248,7 @@ enum ofp_exp_msg_pkttmp_mod_commands {
  *
 ****************************************************************/
 enum ofp_stats_extension_commands {
-    OFPMP_EXP_STATE_STATS,      
+    OFPMP_EXP_STATE_STATS,
     OFPMP_EXP_GLOBAL_STATE_STATS
 };
 
@@ -258,7 +266,7 @@ struct ofp_exp_state_stats_request {
                                OFPTT_ALL for all tables. */
     uint8_t                 get_from_state;
     uint8_t                 pad[2];         /* Align to 64 bits. */
-    uint32_t                state;   
+    uint32_t                state;
     struct ofp_match        match; /* Fields to match. Variable size. */
 };
 OFP_ASSERT(sizeof(struct ofp_exp_state_stats_request) == 24);
@@ -276,7 +284,7 @@ struct ofp_exp_state_stats {
     uint32_t duration_sec;  /* Time state entry has been alive in secs. */
     uint32_t duration_nsec; /* Time state entry has been alive in nsecs beyond duration_sec. */
     uint32_t field_count;    /*number of extractor fields*/
-    uint32_t fields[OFPSC_MAX_FIELD_COUNT]; /*extractor fields*/ 
+    uint32_t fields[OFPSC_MAX_FIELD_COUNT]; /*extractor fields*/
     struct ofp_exp_state_entry entry;
     uint32_t hard_rollback;
     uint32_t idle_rollback;

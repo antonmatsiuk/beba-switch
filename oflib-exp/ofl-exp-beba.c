@@ -288,7 +288,7 @@ ofl_exp_beba_msg_unpack(struct ofp_header const *oh, size_t *len, struct ofl_msg
     exp_header = (struct ofp_experimenter_header *)oh;
 
     switch (ntohl(exp_header->exp_type)) {
-        case (OFPT_EXP_STATE_MOD): 
+        case (OFPT_EXP_STATE_MOD):
         {
             struct ofp_exp_msg_state_mod *sm;
             struct ofl_exp_msg_state_mod *dm;
@@ -332,7 +332,7 @@ ofl_exp_beba_msg_unpack(struct ofp_header const *oh, size_t *len, struct ofl_msg
                                                           (struct ofl_exp_set_global_state *)&(dm->payload[0]));
                 default:
                     return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_STATE_MOD_BAD_COMMAND);
-            }      
+            }
         }
         case (OFPT_EXP_PKTTMP_MOD):
         {
@@ -353,7 +353,7 @@ ofl_exp_beba_msg_unpack(struct ofp_header const *oh, size_t *len, struct ofl_msg
                 OFL_LOG_WARN(LOG_MODULE, "Received PKTTMP_MOD message has invalid length (%zu).", *len);
                 return ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
             }
-            
+
             dm->command = (enum ofp_exp_msg_pkttmp_mod_commands)sm->command;
 
             *len -= 2*sizeof(uint8_t);
@@ -2175,7 +2175,7 @@ handle_stats_request_state(struct pipeline *pl, struct ofl_exp_msg_multipart_req
 ofl_err
 handle_stats_request_global_state(struct pipeline *pl, const struct sender *sender UNUSED, struct ofl_exp_msg_multipart_reply_global_state *reply) {
     uint32_t global_state = pl->dp->global_state;
-    
+
     *reply = (struct ofl_exp_msg_multipart_reply_global_state)
             {{{{{.type = OFPT_MULTIPART_REPLY},
               .type = OFPMP_EXPERIMENTER, .flags = 0x0000},
@@ -2195,7 +2195,7 @@ state_table_stats(struct state_table *table, struct ofl_exp_msg_multipart_reques
     uint32_t fields[MAX_EXTRACTION_FIELD_COUNT] = {0};
     struct timeval tv;
     struct key_extractor *extractor=&table->read_key;
-    
+
     struct ofl_match const * a = (struct ofl_match const *)msg->match;
     struct ofl_match_tlv *state_key_match;
     uint8_t count = 0;
@@ -2247,7 +2247,7 @@ state_table_stats(struct state_table *table, struct ofl_exp_msg_multipart_reques
             found = 1;
             HMAP_FOR_EACH(state_key_match, struct ofl_match_tlv, hmap_node, &a->match_fields)
             {
-                if(memcmp(state_key_match->value,&entry->key[offset[aux]], length[aux])) 
+                if(memcmp(state_key_match->value,&entry->key[offset[aux]], length[aux]))
                     found = 0;
                 aux+=1;
             }
@@ -3003,5 +3003,52 @@ pkttmp_entry_create(struct datapath *dp, struct pkttmp_table *table, struct ofl_
 void
 pkttmp_entry_destroy(struct pkttmp_entry *entry) {
     free(entry->data);
+    free(entry);
+}
+/*Functions used by Fast Path switchover feature*/
+
+struct portfail_table *
+portfail_table_create(struct datapath *dp) {
+    struct portfail_table *table;
+    //size_t i;
+
+    OFL_LOG_DBG(LOG_MODULE, "Creating PortFail TABLE.");
+
+    table = xmalloc(sizeof(struct portfail_table));
+    table->dp = dp;
+    table->entries_num = 0;
+    hmap_init(&table->entries);
+    return table;
+}
+
+void
+portfail_table_destroy(struct portfail_table *table) {
+    struct portfail_entry *entry, *next;
+    HMAP_FOR_EACH_SAFE(entry, next, struct portfail_entry, node, &table->entries) {
+        portfail_entry_destroy(entry);
+    }
+    free(table);
+}
+
+struct portfail_entry *
+portfail_entry_create(struct datapath *dp, struct portfail_table *table, uint32_t port_no, struct ofl_instruction_experimenter *inst) {
+    struct portfail_entry *e;
+    //size_t i;
+    uint64_t now;
+    now = time_msec();
+
+    e = xmalloc(sizeof(struct portfail_entry));
+    e->created = now;
+    e->dp = dp;
+    e->table = table;
+    e->port_no = port_no;
+    e->inst = inst;
+    OFL_LOG_DBG(LOG_MODULE, "Creating PortFail entry for port_no: %d, experimenter_id: %d",e->port_no, e->inst->experimenter_id);
+    return e;
+}
+
+void
+portfail_entry_destroy(struct portfail_entry *entry) {
+    //free(entry->inst); //AM_TODO: delete an associated instruction here?
     free(entry);
 }

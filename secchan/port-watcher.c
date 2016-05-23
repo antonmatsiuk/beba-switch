@@ -417,7 +417,13 @@ port_watcher_periodic_cb(void *pw_)
             if (new_opp.port_no == htonl(OFPP_LOCAL)) {
                 call_local_port_changed_callbacks(pw);
             }
+            /* hook for pkttmp generation here if OFPPC_PORT_DOWN*/
+            if (htonl(new_opp.config) == OFPPC_PORT_DOWN){
+                static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 50);
+                VLOG_WARN_RL(LOG_MODULE, &rl, "Port %s number %d new_state: %d old_state: %d", name, htonl(new_opp.port_no), htonl(new_opp.state), htonl(opp->state));
+                VLOG_WARN_RL(LOG_MODULE, &rl, "Port %s number %d new_config: %d old_config: %d", name, htonl(new_opp.port_no), htonl(new_opp.config), htonl(opp->config));
 
+            }
             /* Notify the controller that the flags changed. */
             ops = make_openflow(sizeof *ops, OFPT_PORT_STATUS, &b);
             ops->reason = OFPPR_MODIFY;

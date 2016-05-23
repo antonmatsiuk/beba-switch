@@ -412,7 +412,7 @@ ofl_exp_beba_inst_to_string (struct ofl_instruction_header const *i);
 void
 ofl_exp_beba_error_pack (struct ofl_msg_exp_error const *msg, uint8_t **buf, size_t *buf_len);
 
-void 
+void
 ofl_exp_beba_error_free (struct ofl_msg_exp_error *msg);
 
 char *
@@ -501,6 +501,58 @@ pkttmp_entry_destroy(struct pkttmp_entry *entry);
 ofl_err
 handle_pkttmp_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,
                                                 const struct sender *sender);
+
+
+/*************************************************************************/
+/*                        experimenter reactions                           */
+/*************************************************************************/
+struct ofl_exp_event_reaction_header {
+    enum ofp_reaction_type   type; /* Instruction type */
+
+};
+
+struct ofl_exp_event_reaction_inst_exprm{
+    struct ofl_exp_event_reaction_header header;
+    struct ofl_instruction_experimenter *instr;
+
+};
+
+/*************************************************************************/
+/*                        experimenter portfail table					*/
+/*************************************************************************/
+
+struct portfail_table {
+    struct datapath  *dp;
+	size_t            entries_num;
+    struct hmap       entries;
+};
+
+struct portfail_entry {
+    struct hmap_node            node;
+    uint32_t                    port_no;
+    struct datapath             *dp;
+    struct portfail_table       *table;
+    uint64_t                    created;
+    //This implementation allows only generation of a single pkttmp, change to a list in the future!
+    struct ofl_instruction_experimenter *inst;
+};
+
+/* experimenter portfail table functions*/
+struct portfail_table *
+portfail_table_create(struct datapath *dp);
+
+void
+portfail_table_destroy(struct portfail_table *table);
+
+/* experimenter portfail entry functions */
+struct portfail_entry *
+portfail_entry_create(struct datapath *dp, struct portfail_table *table, uint32_t port_no, struct ofl_instruction_experimenter *inst);
+
+void
+portfail_entry_destroy(struct portfail_entry *entry);
+
+//ofl_err Do we need this for fail_pkttmp_table ?
+//handle_event_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,const struct sender *sender);
 
 uint32_t
 get_experimenter_id(struct ofl_msg_header const *msg);
