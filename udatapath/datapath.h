@@ -101,6 +101,8 @@ struct datapath
 
     struct pkttmp_table *pkttmps; /* Packet template table */
 
+    struct portfail_table *prtfls; /*PortFail table */
+
     struct ofl_config config; /* Configuration, set from controller. */
 
     /* Switch ports. */

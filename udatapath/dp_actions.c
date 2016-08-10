@@ -131,7 +131,7 @@ set_field(struct packet *pkt, struct ofl_action_set_field *act )
                     uint32_t ipv6_ver_tc_fl = (ipv6->ipv6_ver_tc_fl & ~htonl(IPV6_DSCP_MASK)) |
                                    htonl((((uint32_t) *act->field->value) << IPV6_DSCP_SHIFT));
                     ipv6->ipv6_ver_tc_fl = ipv6_ver_tc_fl;
-                }    
+                }
                 break;
             }
             case OXM_OF_IP_ECN:{
@@ -149,8 +149,8 @@ set_field(struct packet *pkt, struct ofl_action_set_field *act )
                      uint32_t ipv6_ver_tc_fl = (ipv6->ipv6_ver_tc_fl & ~htonl(IPV6_ECN_MASK)) |
                                    htonl((((uint32_t) *act->field->value) << IPV6_ECN_SHIFT));
                     ipv6->ipv6_ver_tc_fl = ipv6_ver_tc_fl;
-                }    
-                break;        
+                }
+                break;
             }
             case OXM_OF_IP_PROTO:{
                 struct ip_header *ipv4 =  pkt->handle_std->proto->ipv4;
@@ -233,29 +233,29 @@ set_field(struct packet *pkt, struct ofl_action_set_field *act )
             /*TODO recalculate SCTP checksum*/
             case OXM_OF_SCTP_SRC:{
                 crc_t crc;
-                struct sctp_header *sctp = pkt->handle_std->proto->sctp;                
+                struct sctp_header *sctp = pkt->handle_std->proto->sctp;
                 size_t len = ((uint8_t*) ofpbuf_tail(pkt->handle_std->pkt->buffer)) - (uint8_t *) sctp;
                 uint16_t v = htons(*(uint16_t*) act->field->value);
                 sctp->sctp_csum = 0;
                 sctp->sctp_src = v;
                 crc = crc_init();
-                crc = crc_update(crc, (unsigned char*)sctp, len);                            
+                crc = crc_update(crc, (unsigned char*)sctp, len);
                 crc = crc_finalize(crc);
                 sctp->sctp_csum = crc;
-                break;                                        
+                break;
             }
             case OXM_OF_SCTP_DST:{
                 crc_t crc;
-                struct sctp_header *sctp = pkt->handle_std->proto->sctp;                
+                struct sctp_header *sctp = pkt->handle_std->proto->sctp;
                 size_t len = ((uint8_t*) ofpbuf_tail(pkt->handle_std->pkt->buffer)) - (uint8_t *) sctp;
                 uint16_t v = htons(*(uint16_t*) act->field->value);
                 sctp->sctp_csum = 0;
                 sctp->sctp_dst = v;
                 crc = crc_init();
-                crc = crc_update(crc, (unsigned char*)sctp, len);                            
+                crc = crc_update(crc, (unsigned char*)sctp, len);
                 crc = crc_finalize(crc);
                 sctp->sctp_csum = crc;
-                break;        
+                break;
             }
             case OXM_OF_ICMPV4_TYPE:
             case OXM_OF_ICMPV6_TYPE:{
@@ -368,7 +368,7 @@ set_field(struct packet *pkt, struct ofl_action_set_field *act )
                 uint16_t old_val16;
                 uint16_t new_val16;
                 struct ipv6_nd_options_hd *opt = (struct ipv6_nd_options_hd*)
-                                        ((uint8_t*) icmp + sizeof(struct icmp_header) + 
+                                        ((uint8_t*) icmp + sizeof(struct icmp_header) +
                                         sizeof(struct ipv6_nd_header));
                 uint8_t *data = (uint8_t*) opt;
                 /*ICMP header + neighbor discovery header reserved bytes*/
@@ -383,7 +383,7 @@ set_field(struct packet *pkt, struct ofl_action_set_field *act )
                     new_val32 = *((uint32_t*) (act->field->value + sizeof(uint16_t)));
                     icmp->icmp_csum = recalc_csum16(icmp->icmp_csum, old_val16, new_val16);
                     icmp->icmp_csum = recalc_csum32(icmp->icmp_csum, old_val32, new_val32);
-                }                                
+                }
                 break;
             }
             case OXM_OF_MPLS_LABEL:{
@@ -408,8 +408,8 @@ set_field(struct packet *pkt, struct ofl_action_set_field *act )
             case OXM_OF_PBB_ISID :{
                 struct pbb_header *pbb = pkt->handle_std->proto->pbb;
                 uint8_t* pbb_isid;
-                pbb_isid = act->field->value; 
-                pbb->id = (pbb->id & 0xFF) | ((pbb_isid[2] << 24) | (pbb_isid[1] << 16) | (pbb_isid[1] << 8));                 
+                pbb_isid = act->field->value;
+                pbb->id = (pbb->id & 0xFF) | ((pbb_isid[2] << 24) | (pbb_isid[1] << 16) | (pbb_isid[1] << 8));
                 break;
             }
             case OXM_OF_TUNNEL_ID :{
@@ -436,16 +436,16 @@ static void
 copy_ttl_out(struct packet *pkt, struct ofl_action_header *act UNUSED) {
     packet_handle_std_validate(pkt->handle_std);
     if (pkt->handle_std->proto->mpls != NULL) {
-        struct mpls_header *mpls = pkt->handle_std->proto->mpls;        
+        struct mpls_header *mpls = pkt->handle_std->proto->mpls;
         if ((ntohl(mpls->fields) & MPLS_S_MASK) == 0) {
             // There is an inner MPLS header
             struct mpls_header *in_mpls = (struct mpls_header *)((uint8_t *)mpls + MPLS_HEADER_LEN);
             mpls->fields = (mpls->fields & ~htonl(MPLS_TTL_MASK)) | (in_mpls->fields & htonl(MPLS_TTL_MASK));
 
-        } else if (pkt->buffer->size >= ETH_HEADER_LEN + MPLS_HEADER_LEN + 
-            IP_HEADER_LEN || pkt->buffer->size >= ETH_HEADER_LEN + 
+        } else if (pkt->buffer->size >= ETH_HEADER_LEN + MPLS_HEADER_LEN +
+            IP_HEADER_LEN || pkt->buffer->size >= ETH_HEADER_LEN +
             MPLS_HEADER_LEN + IPV6_HEADER_LEN) {
-            // Assumes an IPv4 or Ipv6 header follows, if there is place for it            
+            // Assumes an IPv4 or Ipv6 header follows, if there is place for it
             uint8_t version = *((uint8_t *)mpls + MPLS_HEADER_LEN) >> 4;
             if (version == IPV4_VERSION){
                 struct ip_header *ipv4 = (struct ip_header *)((uint8_t *)mpls + MPLS_HEADER_LEN);
@@ -453,7 +453,7 @@ copy_ttl_out(struct packet *pkt, struct ofl_action_header *act UNUSED) {
             }
             else if (version == IPV6_VERSION){
                struct ipv6_header *ipv6 = (struct ipv6_header *)((uint8_t *)mpls + MPLS_HEADER_LEN);
-               mpls->fields = (mpls->fields & ~htonl(MPLS_TTL_MASK)) | htonl((uint32_t)ipv6->ipv6_hop_limit & MPLS_TTL_MASK); 
+               mpls->fields = (mpls->fields & ~htonl(MPLS_TTL_MASK)) | htonl((uint32_t)ipv6->ipv6_hop_limit & MPLS_TTL_MASK);
             }
         }
         else {
@@ -477,10 +477,10 @@ copy_ttl_in(struct packet *pkt, struct ofl_action_header *act UNUSED) {
 
             in_mpls->fields = (in_mpls->fields & ~htonl(MPLS_TTL_MASK)) | (mpls->fields & htonl(MPLS_TTL_MASK));
 
-        } else if (pkt->buffer->size >= ETH_HEADER_LEN + MPLS_HEADER_LEN + 
-            IP_HEADER_LEN || pkt->buffer->size >= ETH_HEADER_LEN + 
+        } else if (pkt->buffer->size >= ETH_HEADER_LEN + MPLS_HEADER_LEN +
+            IP_HEADER_LEN || pkt->buffer->size >= ETH_HEADER_LEN +
             MPLS_HEADER_LEN + IPV6_HEADER_LEN) {
-            // Assumes an IPv4 or Ipv6 header follows, if there is place for it            
+            // Assumes an IPv4 or Ipv6 header follows, if there is place for it
             uint8_t version = *((uint8_t *)mpls + MPLS_HEADER_LEN) >> 4;
             if (version == IPV4_VERSION){
                 struct ip_header *ipv4 = (struct ip_header *)((uint8_t *)mpls + MPLS_HEADER_LEN);
@@ -946,7 +946,6 @@ dec_nw_ttl(struct packet *pkt, struct ofl_action_header *act UNUSED) {
 void
 dp_execute_action(struct packet *pkt,
                struct ofl_action_header *action) {
-
     if (VLOG_IS_DBG_ENABLED(LOG_MODULE)) {
         char *a = ofl_action_to_string(action, pkt->dp->exp);
         VLOG_DBG_RL(LOG_MODULE, &rl, "executing action %s.", a);

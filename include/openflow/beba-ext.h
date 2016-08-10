@@ -25,7 +25,8 @@ enum oxm_exp_match_fields {
  *
  ****************************************************************/
 enum ofp_exp_instructions {
-    OFPIT_IN_SWITCH_PKT_GEN
+    OFPIT_IN_SWITCH_PKT_GEN,
+    OFPIT_PORT_MOD
 };
 
 struct ofp_beba_instruction_experimenter_header {
@@ -42,6 +43,15 @@ struct ofp_exp_instruction_in_switch_pkt_gen {
 	struct ofp_action_header actions[0]; /* Same actions that can be associated with OFPIT_APPLY_ACTIONS */
 };
 OFP_ASSERT(sizeof(struct ofp_exp_instruction_in_switch_pkt_gen) == 24);
+
+struct ofp_exp_instruction_port_mod {
+	struct ofp_beba_instruction_experimenter_header header; /* OpenFlow standard experimenter instruction header */
+	uint32_t	port_no;
+	uint32_t    config;               /* Bitmap of OFPPC_* flags. */
+	uint32_t    mask;                 /* Bitmap of OFPPC_* flags to be changed. */
+	uint8_t pad[4];
+};
+OFP_ASSERT(sizeof(struct ofp_exp_instruction_port_mod) == 32);
 
 /****************************************************************
  *

@@ -197,6 +197,7 @@ dp_new(void)
     dp->groups = group_table_create(dp);
     dp->meters = meter_table_create(dp);
     dp->pkttmps = pkttmp_table_create(dp);
+    dp->prtfls = portfail_table_create(dp);
 
     list_init(&dp->port_list);
     dp->ports_num = 0;

@@ -19,7 +19,6 @@
 #include "lib/ofpbuf.h"
 #include "timeval.h"
 
-
 #define LOG_MODULE ofl_exp_os
 OFL_LOG_INIT(LOG_MODULE)
 
@@ -1397,6 +1396,7 @@ ofl_exp_beba_inst_pack (struct ofl_instruction_header const *src, struct ofp_ins
             memset(di->header.pad, 0x00, 4);
 
             di->pkttmp_id = htons(si->pkttmp_id);
+
             memset(di->header.pad, 0x00, 4);
             data = (uint8_t *)dst + sizeof(struct ofp_exp_instruction_in_switch_pkt_gen);
 
@@ -1405,6 +1405,34 @@ ofl_exp_beba_inst_pack (struct ofl_instruction_header const *src, struct ofp_ins
                 len = ofl_actions_pack(si->actions[i], (struct ofp_action_header *)data, data, NULL);
                 data += len;
             }
+            return total_len;
+        }
+        case OFPIT_PORT_MOD: {
+            size_t total_len;
+            size_t len;
+            uint8_t *data;
+            size_t i;
+
+            struct ofl_exp_instruction_port_mod *si = (struct ofl_exp_instruction_port_mod *)src;
+            struct ofp_exp_instruction_port_mod *di = (struct ofp_exp_instruction_port_mod *)dst;
+
+            OFL_LOG_DBG(LOG_MODULE, "ofl_exp_beba_inst_pack OFPIT_PORT_MOD");
+
+            //TODO may need to pass callbacks instead of NULL
+
+            total_len = sizeof(struct ofp_exp_instruction_port_mod);
+
+            di->header.header.type = htons(src->type); //OFPIT_EXPERIMENTER
+            di->header.header.experimenter  = htonl(exp->experimenter_id); //BEBA_VENDOR_ID
+            di->header.instr_type = htonl(ext->instr_type); //OFPIT_PORT_MOD
+
+            di->header.header.len = htons(total_len);
+            memset(di->header.pad, 0x00, 4);
+
+            di->port_no = htonl(si->port_no);
+            di->config = htonl(si->config);
+            di->mask = htonl(si->mask);
+            memset(di->header.pad, 0x00, 4);
             return total_len;
         }
         default:
@@ -1479,6 +1507,29 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
 
             break;
         }
+        case OFPIT_PORT_MOD: {
+            struct ofp_exp_instruction_port_mod *si;
+            struct ofl_exp_instruction_port_mod *di;
+            struct ofp_action_header *act;
+            //OFL_LOG_WARN(LOG_MODULE, "Parsing OFPIT_PORT_MOD");
+            di = (struct ofl_exp_instruction_port_mod *)malloc(sizeof(struct ofl_exp_instruction_port_mod));
+            di->header.header.experimenter_id  = ntohl(exp->experimenter); //BEBA_VENDOR_ID
+            inst = (struct ofl_instruction_header *)di;
+
+            if (ilen < sizeof(struct ofp_exp_instruction_port_mod)) {
+                OFL_LOG_WARN(LOG_MODULE, "Received PORT_MOD instruction has invalid length (%zu).", *len);
+                error = ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
+            }
+
+            ilen -= sizeof(struct ofp_exp_instruction_port_mod);
+
+            si = (struct ofp_exp_instruction_port_mod *)src;
+            di->header.instr_type = ntohl(beba_exp->instr_type); //OFPIT_PORT_MOD
+            di->port_no = ntohl(si->port_no);
+            di->config = ntohl(si->config);
+            di->mask = ntohl(si->mask);
+            break;
+        }
         default: {
             struct ofl_instruction_experimenter *di;
             di = (struct ofl_instruction_experimenter *)malloc(sizeof(struct ofl_instruction_experimenter));
@@ -1520,6 +1571,16 @@ ofl_exp_beba_inst_free (struct ofl_instruction_header *i) {
                 return 0;
                 break;
             }
+            case (OFPIT_PORT_MOD):
+            {
+                OFL_LOG_DBG(LOG_MODULE, "Freeing BEBA instruction PORT_MOD.");
+                struct ofl_exp_instruction_port_mod *instr = (struct ofl_exp_instruction_port_mod *)ext;
+                // TODO We may need to use OFL_UTILS_FREE_ARR_FUN2 and pass the ofl_exp callbacks instead of NULL
+                free(instr);
+                OFL_LOG_DBG(LOG_MODULE, "Done.");
+                return 0;
+                break;
+            }
             default:
             {
                 OFL_LOG_WARN(LOG_MODULE, "Unknown BEBA instruction type. Perhaps not freed correctly");
@@ -1537,12 +1598,18 @@ ofl_exp_beba_inst_ofp_len (struct ofl_instruction_header const *i) {
     switch (ext->instr_type) {
         case OFPIT_IN_SWITCH_PKT_GEN: {
             struct ofl_exp_instruction_in_switch_pkt_gen *i = (struct ofl_exp_instruction_in_switch_pkt_gen *)ext;
-            OFL_LOG_DBG(LOG_MODULE, "ofl_exp_beba_inst_ofp_len");
+            OFL_LOG_DBG(LOG_MODULE, "ofl_exp_beba_inst_ofp_len: OFPIT_IN_SWITCH_PKT_GEN");
             // TODO We may need to pass the ofl_exp callbacks instead of NULL
 //              return sizeof(struct ofl_exp_beba_instr_header)
 //                      + ofl_actions_ofp_total_len(i->actions, i->actions_num, exp);
             return sizeof(struct ofp_exp_instruction_in_switch_pkt_gen)
                     + ofl_actions_ofp_total_len(i->actions, i->actions_num, NULL);
+        }
+        case OFPIT_PORT_MOD: {
+            struct ofl_exp_instruction_port_mod *i = (struct ofl_exp_instruction_port_mod *)ext;
+            OFL_LOG_DBG(LOG_MODULE, "ofl_exp_beba_inst_ofp_len: OFPIT_PORT_MOD");
+            // TODO We may need to pass the ofl_exp callbacks instead of NULL
+            return sizeof(struct ofp_exp_instruction_port_mod);
         }
         default:
             OFL_LOG_WARN(LOG_MODULE, "Trying to len unknown BEBA instruction type.");
@@ -2996,7 +3063,8 @@ pkttmp_entry_create(struct datapath *dp, struct pkttmp_table *table, struct ofl_
 
 
     OFL_LOG_DBG(LOG_MODULE, "Creating PKTTMP entry with following values id %u, data_len %u.",e->pkttmp_id, e->data_length);
-
+    //AM: remove
+    OFL_LOG_WARN(LOG_MODULE, "Creating PKTTMP entry pkttmp_id: %d, datapath: %d",e->pkttmp_id, e->dp);
     return e;
 }
 
@@ -3051,4 +3119,59 @@ void
 portfail_entry_destroy(struct portfail_entry *entry) {
     //free(entry->inst); //AM_TODO: delete an associated instruction here?
     free(entry);
+}
+
+struct portfail_entry *
+portfail_entry_create_manual(struct datapath *dp, struct portfail_table *table, uint32_t port_no) {
+    //TODO Remove after table implementation
+    //OFL_LOG_WARN(LOG_MODULE, "Creating PortFail entry for port_no: %d",port_no);
+    struct ofl_exp_instruction_in_switch_pkt_gen *beba_insw_i;
+    struct ofl_instruction_experimenter *inst;
+
+    beba_insw_i = xmalloc(sizeof(struct ofl_exp_instruction_in_switch_pkt_gen));
+    beba_insw_i->pkttmp_id = 1;
+
+    struct ofl_action_output *output_act;
+    output_act = xmalloc(sizeof(struct ofl_action_output));
+    output_act->port = 2;
+    output_act->max_len = 128;
+    output_act->header.type = OFPAT_OUTPUT;
+    output_act->header.len = sizeof(struct ofl_action_output);
+
+    beba_insw_i->actions = xmalloc(sizeof(struct ofl_action_header **) *1);
+    *(beba_insw_i->actions) = (struct ofl_action_header *) output_act;
+
+    beba_insw_i->actions_num = 1;
+
+    beba_insw_i->header.instr_type = OFPIT_IN_SWITCH_PKT_GEN;
+    beba_insw_i->header.header.experimenter_id = BEBA_VENDOR_ID;
+    beba_insw_i->header.header.header.type = OFPIT_EXPERIMENTER;
+
+    inst = (struct ofl_instruction_experimenter*) beba_insw_i;
+
+    struct portfail_entry *e;
+    e = xmalloc(sizeof(struct portfail_entry));
+    e->created = time_msec();
+    e->dp = dp;
+    e->table = table;
+    e->port_no = port_no;
+    e->inst = inst;
+
+    //OFL_LOG_WARN(LOG_MODULE, "PortFail entry created for port_no: %d, datapath: %d",e->port_no, e->dp);
+    //OFL_LOG_WARN(LOG_MODULE, "Act_pointer: type: %d, len: %d address: %d",(*act_pointer)->type, (*act_pointer)->len, *act_pointer);
+    //OFL_LOG_WARN(LOG_MODULE, "Output_action: type: %d, len: %d address: %d",output_act->header.type, output_act->header.len, &(output_act->header));
+    //OFL_LOG_WARN(LOG_MODULE, "port_fail_entry: instr_type: %d",e->inst->header.type);
+    return e;
+}
+
+void
+portfail_entry_exec(struct portfail_entry *entry, struct datapath *dp) {
+    struct packet *pkt;
+    pkt = xmalloc(sizeof(struct packet));
+    pkt->dp = dp;
+    pkt->buffer = NULL;
+    //dp_exp_inst(pkt, entry->inst);
+    OFL_LOG_WARN(LOG_MODULE, "Portfail entry executed for failed port_no: %d", entry->port_no);
+    free (entry);
+    free(pkt);
 }

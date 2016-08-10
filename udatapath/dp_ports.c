@@ -706,6 +706,31 @@ dp_ports_handle_port_mod(struct datapath *dp, struct ofl_msg_port_mod *msg, cons
     return 0;
 }
 
+
+ofl_err
+//dp_ports_handle_exp_instr_port_mod(struct datapath *dp, struct ofl_exp_instruction_port_mod *msg) {
+dp_ports_handle_exp_instr_port_mod(struct datapath *dp, uint32_t port_no, uint32_t config, uint32_t mask){
+    struct sw_port *p;
+    p = dp_ports_lookup(dp, port_no);
+
+    if (p == NULL) {
+        return ofl_error(OFPET_PORT_MOD_FAILED,OFPPMFC_BAD_PORT);
+    }
+
+    if (mask) {
+        if (config != p->conf->config) {
+        //avoid triggering for subsequent packets
+        p->conf->config &= ~mask;
+        p->conf->config |= config&mask;
+        dp_port_live_update(p);
+        VLOG_WARN_RL(LOG_MODULE, &rl, "Port %d updated: config: %d ,mask:% d", p->conf->port_no, p->conf->config, mask);
+        }
+
+    }
+    //TODO Notify controllers
+    return 0;
+}
+
 static void
 dp_port_stats_update(struct sw_port *port) {
     port->stats->duration_sec  =  (time_msec() - port->created) / 1000;
@@ -719,6 +744,24 @@ dp_port_live_update(struct sw_port *p) {
      || (p->conf->config & OFPPC_PORT_DOWN)) {
       /* Port not live */
       p->conf->state &= ~OFPPS_LIVE;
+      if (p->conf->port_no == 1) {
+          static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 50);
+          VLOG_WARN_RL(LOG_MODULE, &rl, "Port %d is dead ", p->conf->port_no);
+          struct portfail_entry *entry;
+          entry = portfail_entry_create_manual(p->dp, p->dp->prtfls, p->conf->port_no);
+
+          //portfail_entry_exec(entry, p->dp);
+
+          struct packet *pkt;
+          pkt = xmalloc(sizeof(struct packet));
+          pkt->dp = p->dp;
+          pkt->buffer = NULL;
+          VLOG_WARN_RL(LOG_MODULE, &rl, "portfail entry created -> port: %d", entry->port_no);
+          dp_exp_inst(pkt, entry->inst);
+          VLOG_WARN_RL(LOG_MODULE, &rl, "Portfail entry executed -> port_no: %d", entry->port_no);
+          free (entry);
+          free(pkt);
+          }
   } else {
       /* Port is live */
       p->conf->state |= OFPPS_LIVE;

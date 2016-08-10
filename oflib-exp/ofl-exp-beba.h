@@ -461,6 +461,13 @@ struct ofl_exp_instruction_in_switch_pkt_gen {
 	struct ofl_action_header        **actions;
 };
 
+struct ofl_exp_instruction_port_mod {
+	struct ofl_exp_beba_instr_header  header; /* OFPIT_EXP_PORT_MOD*/
+	uint32_t				          port_no;
+	uint32_t                          config;               /* Bitmap of OFPPC_* flags. */
+	uint32_t                          mask;                 /* Bitmap of OFPPC_* flags to be changed. */
+};
+
 /*************************************************************************/
 /*                        experimenter pkttmp table						 */
 /*************************************************************************/
@@ -498,24 +505,26 @@ pkttmp_entry_create(struct datapath *dp, struct pkttmp_table *table, struct ofl_
 void
 pkttmp_entry_destroy(struct pkttmp_entry *entry);
 
+
 ofl_err
 handle_pkttmp_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,
                                                 const struct sender *sender);
 
 
 /*************************************************************************/
-/*                        experimenter reactions                           */
+/*                        experimenter events                           */
 /*************************************************************************/
-struct ofl_exp_event_reaction_header {
+struct ofl_exp_event_header {
     enum ofp_reaction_type   type; /* Instruction type */
 
 };
 
-struct ofl_exp_event_reaction_inst_exprm{
-    struct ofl_exp_event_reaction_header header;
+struct ofl_exp_event_{
+    struct ofl_exp_event_header header;
     struct ofl_instruction_experimenter *instr;
 
 };
+
 
 /*************************************************************************/
 /*                        experimenter portfail table					*/
@@ -537,6 +546,15 @@ struct portfail_entry {
     struct ofl_instruction_experimenter *inst;
 };
 
+struct portfail_entry_manual {
+    uint32_t                    port_no;
+    struct datapath             *dp;
+    uint64_t                    created;
+    //This implementation allows only generation of a single pkttmp, change to a list in the future!
+    struct ofl_instruction_experimenter *inst;
+};
+
+
 /* experimenter portfail table functions*/
 struct portfail_table *
 portfail_table_create(struct datapath *dp);
@@ -547,6 +565,9 @@ portfail_table_destroy(struct portfail_table *table);
 /* experimenter portfail entry functions */
 struct portfail_entry *
 portfail_entry_create(struct datapath *dp, struct portfail_table *table, uint32_t port_no, struct ofl_instruction_experimenter *inst);
+
+void
+portfail_entry_exec(struct portfail_entry *entry, struct datapath *dp);
 
 void
 portfail_entry_destroy(struct portfail_entry *entry);

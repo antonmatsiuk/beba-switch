@@ -85,11 +85,11 @@ dp_exp_action(struct packet *pkt, struct ofl_action_experimenter *act) {
                 }
                 break;
             }
-            case (OFPAT_EXP_SET_GLOBAL_STATE): 
+            case (OFPAT_EXP_SET_GLOBAL_STATE):
             {
                 struct ofl_exp_action_set_global_state *wns = (struct ofl_exp_action_set_global_state *)action;
                 uint32_t global_state = pkt->dp->global_state;
-                
+
                 global_state = (global_state & ~(wns->global_state_mask)) | (wns->global_state & wns->global_state_mask);
                 pkt->dp->global_state = global_state;
                 break;
@@ -120,17 +120,16 @@ dp_exp_inst(struct packet *pkt UNUSED, struct ofl_instruction_experimenter *inst
 					uint8_t found = 0;
 					struct ofpbuf *buf;
 					struct packet *gen_pkt;
-
 					HMAP_FOR_EACH_WITH_HASH(pkttmp, struct pkttmp_entry, node,
 							beba_insw_i->pkttmp_id, &t->entries) {
-						//VLOG_WARN_RL(LOG_MODULE, &rl, "Retrieving: pkttmp id %u!", pkttmp->pkttmp_id);
+						VLOG_DBG_RL(LOG_MODULE, &rl, "Retrieving: pkttmp id %u!", pkttmp->pkttmp_id);
 						found = 1;
 
 						// ** Packet generation **
 
 						/* If there is no packet in the message, send error message */
 						if (!pkttmp->data_length){
-							VLOG_WARN_RL(LOG_MODULE, &rl,
+							VLOG_DBG_RL(LOG_MODULE, &rl,
 									"No packet data associated with pkttmp_id %u!",
 									beba_insw_i->pkttmp_id);
 							return;
@@ -159,6 +158,8 @@ dp_exp_inst(struct packet *pkt UNUSED, struct ofl_instruction_experimenter *inst
 
 						// The pkt generation never leads to a PACKET_IN message,
 						// thus, the cookie value is not required and set to 0
+                        //AM: Remove
+                        //VLOG_WARN_RL(LOG_MODULE, &rl, "Created buffer for Pkttmp_id: %u len: %u", pkttmp->pkttmp_id, pkttmp->data_length);
 						dp_execute_action_list(gen_pkt, beba_insw_i->actions_num,
 								beba_insw_i->actions, 0);
 						if(gen_pkt) {
@@ -171,6 +172,22 @@ dp_exp_inst(struct packet *pkt UNUSED, struct ofl_instruction_experimenter *inst
 					}
 					return;
 
+				}
+                case (OFPIT_PORT_MOD): {
+					struct ofl_exp_instruction_port_mod *beba_port_i =
+							(struct ofl_exp_instruction_port_mod *) beba_inst;
+    					// ** Port Modification **
+                    ofl_err err;
+                    //err = dp_ports_handle_exp_instr_port_mod(pkt->dp, beba_port_i);
+                    VLOG_WARN_RL(LOG_MODULE, &rl, "OFPIT_PORT_MOD execution....");
+                    err = dp_ports_handle_exp_instr_port_mod(pkt->dp, beba_port_i->port_no,
+                                beba_port_i->config, beba_port_i->mask);
+                    if (err !=0) {
+                        VLOG_WARN_RL(LOG_MODULE, &rl, "OFPIT_PORT_MOD execution failed!");
+                        break;
+                    }
+                    VLOG_DBG_RL(LOG_MODULE, &rl, "PORT_MOD instruction executed!");
+	         		return;
 				}
 			}
 
