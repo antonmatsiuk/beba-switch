@@ -97,6 +97,38 @@ struct ofl_exp_del_pkttmp {
 	uint32_t pkttmp_id;
 };
 
+/************************
+ * event mod messages
+ ************************/
+
+struct ofl_exp_msg_event_mod {
+    struct ofl_exp_beba_msg_header header;   /* OFP_EXP_EVENT_MOD */
+    enum ofp_exp_msg_event_mod_commands command;
+    uint8_t payload[OFPSC_MAX_KEY_LEN+16]; //Ugly Size, calculate properly
+};
+
+struct ofl_exp_add_event_mod {
+	uint32_t event_id;
+    enum ofp_event_type event_type; /* one of enum ofp_event_type */
+    uint8_t payload[OFPSC_MAX_KEY_LEN+10]; //Ugly Size
+};
+
+struct ofl_exp_del_event_mod {
+	uint32_t event_id;
+};
+
+struct ofl_exp_event_port_state {
+	uint32_t port_no; /*Port number to track for state changes */
+	uint32_t state; /* Bitmap of OFPPS_* flags which trigger the event */
+    enum ofp_event_reaction_type react_type; /* one of ofp_event_reaction_type */
+    uint8_t payload[OFPSC_MAX_KEY_LEN]; //Ugly Size calculate properly
+};
+
+struct ofl_exp_event_react_exp_instr{
+    uint16_t len; /* Length of this struct in bytes. */
+    struct ofl_instruction_header **instr;
+
+};
 
 /*************************
 * Multipart reply message: State entry statistics
@@ -511,19 +543,6 @@ handle_pkttmp_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,
                                                 const struct sender *sender);
 
 
-/*************************************************************************/
-/*                        experimenter events                           */
-/*************************************************************************/
-struct ofl_exp_event_header {
-    enum ofp_reaction_type   type; /* Instruction type */
-
-};
-
-struct ofl_exp_event_{
-    struct ofl_exp_event_header header;
-    struct ofl_instruction_experimenter *instr;
-
-};
 
 
 /*************************************************************************/

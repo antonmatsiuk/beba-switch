@@ -71,6 +71,86 @@ ofl_structs_del_pkttmp_unpack(struct ofp_exp_del_pkttmp *src, size_t *len, struc
     return 0;
 }
 
+static ofl_err
+ofl_structs_event_react_exp_instr_unpack(struct ofp_exp_event_react_exp_instr *sm, size_t *len, struct ofl_exp_event_react_exp_instr *dm){
+
+    if( *len >= 2*sizeof(uint8_t)) {
+        //dm->instr_num = ntohs(sm->instr_num);
+        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_REACT_EXP_INSTR [Msg_len: %zu]", *len);
+        *len -= 2*sizeof(uint8_t);
+        //TODO implemented only a single instruction parsing, change to a list!
+        dm->len = ntohl(sm->len);
+        ofl_exp_beba_inst_unpack ((struct ofp_instruction *)&(sm->instr[0]), len, (struct ofl_instruction_header **)&(dm->instr[0]));
+        }
+    else {
+       OFL_LOG_WARN(LOG_MODULE, "Received EVENT_REACT_EXP_INSTR is too short (%zu)", *len);
+       return ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
+    }
+    return 0;
+}
+
+static ofl_err
+ofl_structs_event_port_state_unpack (struct ofp_exp_event_port_state *sm, size_t *len, struct ofl_exp_event_port_state *dm) {
+
+    if( *len >= 12*sizeof(uint8_t)) {
+        dm->port_no = ntohl(sm->port_no);
+        dm->state = ntohl(sm->state);
+        dm->react_type = ntohl(sm->react_type);
+        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_PORT_STATE message fpr port_no: (%d) react_type: (%d) [Msg_len: %zu]", dm->port_no, dm->react_type, *len);
+        *len -= 12*sizeof(uint8_t);
+        switch (dm->react_type){
+            case OFP_EXP_INSTRUCTION:
+                return ofl_structs_event_react_exp_instr_unpack((struct ofp_exp_event_react_exp_instr *)&(sm->payload[0]), len, (struct ofl_exp_event_react_exp_instr *)&(dm->payload[0]));
+            default:
+                return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_EVENT_MOD_BAD_COMMAND);
+        }
+    }
+    else {
+       OFL_LOG_WARN(LOG_MODULE, "Received EVENT_PORT_STATE is too short (%zu)", *len);
+       return ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
+    }
+    return 0;
+}
+
+static ofl_err
+ofl_structs_del_event_mod_unpack(struct ofp_exp_del_event_mod *sm, size_t *len, struct ofl_exp_del_event_mod *dm) {
+
+    if( *len >= 6*sizeof(uint8_t)) {
+        dm->event_id = ntohl(sm->event_id);
+                OFL_LOG_DBG(LOG_MODULE, "Received EVENT_DEL_MOD message  event_id: (%d) t [Msg_len: %zu]", dm->event_id, *len);
+       *len -= 6*sizeof(uint8_t);
+    }
+    else {
+       OFL_LOG_WARN(LOG_MODULE, "Received EVENT_DEL_MOD is too short (%zu)", *len);
+       return ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
+    }
+    return 0;
+}
+
+static ofl_err
+ofl_structs_add_event_mod_unpack(struct ofp_exp_add_event_mod *sm, size_t *len, struct ofl_exp_add_event_mod *dm) {
+
+    if( *len >= 6*sizeof(uint8_t)) {
+        dm->event_id = ntohl(sm->event_id);
+        dm->event_type = ntohs(sm->event_type);
+        OFL_LOG_WARN(LOG_MODULE, "sizeof(struct ofp_exp_add_event_mod): %d", sizeof(struct ofp_exp_add_event_mod));
+        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_ADD_MOD message to set event_id: (%d) type: (%d) [Msg_len: %zu]", dm->event_id, dm->event_type, *len);
+       *len -= 6*sizeof(uint8_t);
+        switch ntohs(dm->event_type){
+            case PORT_STATE:
+                return ofl_structs_event_port_state_unpack((struct ofp_exp_event_port_state *)&(sm->payload[0]), len, (struct ofl_exp_event_port_state *)&(dm->payload[0]));
+            default:
+                return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_EVENT_MOD_BAD_COMMAND);
+            }
+    }
+    else
+    { //control of struct ofp_extraction length.
+       OFL_LOG_WARN(LOG_MODULE, "Received EVENT_ADD_MOD is too short (%zu)", *len);
+       return ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
+    }
+    return 0;
+}
+
 /* functions used by ofp_exp_msg_state_mod*/
 static ofl_err
 ofl_structs_stateful_table_config_unpack(struct ofp_exp_stateful_table_config const *src, size_t *len, struct ofl_exp_stateful_table_config *dst)
@@ -366,6 +446,39 @@ ofl_exp_beba_msg_unpack(struct ofp_header const *oh, size_t *len, struct ofl_msg
                     return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_PKTTMP_MOD_BAD_COMMAND);
             }
         }
+        case (OFPT_EXP_EVENT_MOD):
+        {
+            struct ofp_exp_msg_event_mod *sm;
+            struct ofl_exp_msg_event_mod *dm;
+
+            *len -= sizeof(struct ofp_experimenter_header);
+
+            sm = (struct ofp_exp_msg_event_mod *)exp_header;
+            dm = (struct ofl_exp_msg_event_mod *)malloc(sizeof(struct ofl_exp_msg_event_mod));
+
+            dm->header.header.experimenter_id = ntohl(exp_header->experimenter);
+            dm->header.type                   = ntohl(exp_header->exp_type);
+
+            (*msg) = (struct ofl_msg_experimenter *)dm;
+
+            if (*len < 2*sizeof(uint8_t)) {
+                OFL_LOG_WARN(LOG_MODULE, "Received EVENT_MOD message has invalid length (%zu).", *len);
+                return ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
+            }
+
+            dm->command = (enum ofp_exp_msg_event_mod_commands)sm->command;
+
+            *len -= 2*sizeof(uint8_t);
+
+            switch(dm->command){
+                case OFPSC_ADD_EVENT:
+                    return ofl_structs_add_event_mod_unpack(&(sm->payload[0]), len, &(dm->payload[0]));
+                case OFPSC_DEL_EVENT:
+                    return ofl_structs_del_event_mod_unpack(&(sm->payload[0]), len, &(dm->payload[0]));
+                default:
+                    return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_EVENT_MOD_BAD_COMMAND);
+            }
+        }
         case (OFPT_EXP_FLOW_NOTIFICATION):
         {
             struct ofp_exp_msg_flow_ntf * sm;
@@ -442,6 +555,13 @@ ofl_exp_beba_msg_free(struct ofl_msg_experimenter *msg)
             free(msg);
             break;
         }
+        case (OFPT_EXP_EVENT_MOD):
+        {
+            struct ofl_exp_msg_event_mod *event_mod = (struct ofl_exp_msg_event_mod *)exp;
+            OFL_LOG_DBG(LOG_MODULE, "Free Beba EVENT_MOD Experimenter message. bebaexp{type=\"%u\", command=\"%u\"}", exp->type, event_mod->command);
+            free(msg);
+            break;
+        }
         case (OFPT_EXP_FLOW_NOTIFICATION):
         {
             struct ofl_exp_msg_notify_flow_change * msg = (struct ofl_exp_msg_notify_flow_change *) exp;
@@ -489,6 +609,12 @@ ofl_exp_beba_msg_to_string(struct ofl_msg_experimenter const *msg)
         {
             struct ofl_exp_msg_pkttmp_mod *pkttmp_mod = (struct ofl_exp_msg_pkttmp_mod *)exp;
             OFL_LOG_DBG(LOG_MODULE, "Print Beba PKTTMP_MOD Experimenter message BEBA_MSG{type=\"%u\", command=\"%u\"}", exp->type, pkttmp_mod->command);
+            break;
+        }
+        case (OFPT_EXP_EVENT_MOD):
+        {
+            struct ofl_exp_msg_event_mod *event_mod = (struct ofl_exp_msg_event_mod *)exp;
+            OFL_LOG_DBG(LOG_MODULE, "Print Beba EVENT_MOD Experimenter message BEBA_MSG{type=\"%u\", command=\"%u\"}", exp->type, event_mod->command);
             break;
         }
         default: {
@@ -1510,7 +1636,6 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
         case OFPIT_PORT_MOD: {
             struct ofp_exp_instruction_port_mod *si;
             struct ofl_exp_instruction_port_mod *di;
-            struct ofp_action_header *act;
             //OFL_LOG_WARN(LOG_MODULE, "Parsing OFPIT_PORT_MOD");
             di = (struct ofl_exp_instruction_port_mod *)malloc(sizeof(struct ofl_exp_instruction_port_mod));
             di->header.header.experimenter_id  = ntohl(exp->experimenter); //BEBA_VENDOR_ID
@@ -1574,7 +1699,7 @@ ofl_exp_beba_inst_free (struct ofl_instruction_header *i) {
             case (OFPIT_PORT_MOD):
             {
                 OFL_LOG_DBG(LOG_MODULE, "Freeing BEBA instruction PORT_MOD.");
-                struct ofl_exp_instruction_port_mod *instr = (struct ofl_exp_instruction_port_mod *)ext;
+                struct ofl_exp_instruction_port_mod *instr = (struct ofl_exp_instruction_port_mod *)i;
                 // TODO We may need to use OFL_UTILS_FREE_ARR_FUN2 and pass the ofl_exp callbacks instead of NULL
                 free(instr);
                 OFL_LOG_DBG(LOG_MODULE, "Done.");
@@ -1629,6 +1754,11 @@ ofl_exp_beba_inst_to_string (struct ofl_instruction_header const *i)
     struct ofl_exp_beba_instr_header *ext = (struct ofl_exp_beba_instr_header *)exp;
     switch (ext->instr_type) {
         case (OFPIT_IN_SWITCH_PKT_GEN): {
+            OFL_LOG_DBG(LOG_MODULE, "Trying to print BEBA Experimenter instruction. Not implemented yet!");
+            fprintf(stream, "OFPIT{type=\"%u\"}", ext->instr_type);
+            break;
+        }
+        case (OFPIT_PORT_MOD): {
             OFL_LOG_DBG(LOG_MODULE, "Trying to print BEBA Experimenter instruction. Not implemented yet!");
             fprintf(stream, "OFPIT{type=\"%u\"}", ext->instr_type);
             break;
@@ -2208,6 +2338,47 @@ handle_pkttmp_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,
             OFL_LOG_DBG(LOG_MODULE, "PKTTMP id is %d, inserted to hash map", e->pkttmp_id);
             break;}
 
+        default:
+            return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_PKTTMP_MOD_FAILED);
+    }
+    return 0;
+}
+
+ofl_err
+handle_event_mod(struct pipeline *pl, struct ofl_exp_msg_event_mod *msg,
+                                                const struct sender *sender) {
+    OFL_LOG_DBG(LOG_MODULE, "Handling EVENT_MOD");
+    /* TODO: complete handling of creating and deleting pkttmp entry */
+    switch (msg->command){
+        case OFPSC_ADD_EVENT:{
+            struct ofl_exp_add_event_mod *ev = (struct ofl_exp_add_event_mod *) msg->payload;
+
+            switch (ev->event_type){
+                case PORT_STATE:{
+                    struct ofl_exp_event_port_state *pst = (struct ofl_exp_event_port_state *)ev->payload;
+                    //check the state, currently only portfail state implemented;
+                    //if (pst->port_state == ..
+                    switch (pst->react_type){
+                        case OFP_EXP_INSTRUCTION:{
+                            struct ofl_exp_event_react_exp_instr *evr = (struct ofl_exp_event_react_exp_instr *)pst->payload;
+                            struct portfail_entry *pfl;
+                            //struct ofl_instruction_header **instr => struct ofl_instruction_experimenter *inst;
+                            //Currently deals only with a single instruction attached
+                            pfl = portfail_entry_create(pl->dp, pl->dp->prtfls, pst->port_no, (struct ofl_instruction_experimenter *)evr->instr[0]);
+                            hmap_insert(&pl->dp->prtfls->entries, &pfl->node, pfl->port_no);
+
+                        break;}
+                        default:
+                            return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_EVENT_MOD_FAILED);
+                    }
+                break;}
+                default:
+                    return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_EVENT_MOD_FAILED);
+            }
+            break;}
+        case OFPSC_DEL_EVENT:{
+        //TODO Delete by event_id
+        break;}
         default:
             return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_PKTTMP_MOD_FAILED);
     }

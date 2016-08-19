@@ -55,14 +55,6 @@ OFP_ASSERT(sizeof(struct ofp_exp_instruction_port_mod) == 32);
 
 /****************************************************************
  *
- * OpenFlow experimenter Reactions
- *
- ****************************************************************/
-enum ofp_reaction_type {
-    OFP_EXP_INSTRUCTION = 1       /* Execute an experimental instruction*/
-};
-/****************************************************************
- *
  * OpenFlow experimenter Actions
  *
  ****************************************************************/
@@ -113,7 +105,8 @@ enum ofp_exp_messages {
     OFPT_EXP_STATE_MOD,
     OFPT_EXP_PKTTMP_MOD,
     OFPT_EXP_STATE_CHANGED,
-    OFPT_EXP_FLOW_NOTIFICATION
+    OFPT_EXP_FLOW_NOTIFICATION,
+    OFPT_EXP_EVENT_MOD
     // Missing type: Notification for missing packet template (after NEC people provide their code)
 };
 
@@ -131,7 +124,9 @@ enum ofp_exp_beba_errors{
     OFPEC_BAD_MATCH_WILDCARD,
     OFPET_BAD_EXP_INSTRUCTION,
     OFPEC_EXP_PKTTMP_MOD_FAILED,
-    OFPEC_EXP_PKTTMP_MOD_BAD_COMMAND
+    OFPEC_EXP_PKTTMP_MOD_BAD_COMMAND,
+    OFPEC_EXP_EVENT_MOD_FAILED,
+    OFPEC_EXP_EVENT_MOD_BAD_COMMAND,
 };
 
 /****************************************************************
@@ -252,6 +247,58 @@ enum ofp_exp_msg_pkttmp_mod_commands {
     OFPSC_DEL_PKTTMP
 };
 
+/****************************************************************
+ *
+ *      OFPT_EXP_EVENT_MOD
+ *
+ ****************************************************************/
+enum ofp_exp_msg_event_mod_commands {
+    OFPSC_ADD_EVENT = 0,
+    OFPSC_DEL_EVENT
+};
+
+enum ofp_event_type {
+    PORT_STATE,       /* Port state has changed*/
+    FLOW_EXPIRED,     /* Expiration of idle or hard timeout */
+    TIMER_EXPIRED,    /* Expiration of an internal timer */
+    BUCKET_STATE       /* Bucket state change */
+};
+
+enum ofp_event_reaction_type {
+    OFP_EXP_INSTRUCTION       /* Execute an experimental instruction*/
+};
+
+struct ofp_exp_msg_event_mod {
+    struct ofp_experimenter_header header; /* OpenFlow's standard experimenter message header */
+    uint8_t command;
+    uint8_t pad;
+    uint8_t payload[];
+};
+
+struct ofp_exp_add_event_mod {
+	uint32_t event_id;
+    uint16_t event_type; /* one of enum ofp_event_type */
+    uint8_t payload[];
+};
+
+struct ofp_exp_del_event_mod {
+	uint32_t event_id;
+    uint8_t pad[2];
+};
+
+struct ofp_exp_event_port_state {
+	uint32_t port_no; /*Port number to track for state changes */
+	uint32_t state; /* Bitmap of OFPPS_* flags which trigger the event */
+    uint16_t react_type; /* one of ofp_event_reaction_type */
+	uint8_t pad [2];
+    uint8_t payload[]; /*currently only generation of pkttmp is implemented */
+};
+
+struct ofp_exp_event_react_exp_instr{
+    uint16_t len; /* Length of this struct in bytes. */
+    uint8_t pad[2];
+    struct ofp_instruction instr[0]; /* Instruction set */
+};
 /****************************************************************
  *
  *   MULTIPART MESSAGE: OFPMP_EXP_STATE_STATS

@@ -281,6 +281,9 @@ dp_exp_message(struct datapath *dp, struct ofl_msg_experimenter *msg, const stru
                 case (OFPT_EXP_PKTTMP_MOD): {
                     return handle_pkttmp_mod(dp->pipeline, (struct ofl_exp_msg_pkttmp_mod *)msg, sender);
                 }
+                case (OFPT_EXP_EVENT_MOD): {
+                    return handle_event_mod(dp->pipeline, (struct ofl_exp_msg_event_mod *)msg, sender);
+                }
                 default: {
                     VLOG_WARN_RL(LOG_MODULE, &rl, "Trying to handle unknown experimenter type (%u).", exp->type);
                     return ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_MESSAGE);
