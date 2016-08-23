@@ -74,18 +74,19 @@ ofl_structs_del_pkttmp_unpack(struct ofp_exp_del_pkttmp *src, size_t *len, struc
 static ofl_err
 ofl_structs_event_react_exp_instr_unpack(struct ofp_exp_event_react_exp_instr *sm, size_t *len, struct ofl_exp_event_react_exp_instr *dm){
 
-    if( *len >= 2*sizeof(uint8_t)) {
-        //dm->instr_num = ntohs(sm->instr_num);
-        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_REACT_EXP_INSTR [Msg_len: %zu]", *len);
-        *len -= 2*sizeof(uint8_t);
+    if( *len >= 4*sizeof(uint8_t)) {
+        *len -= 4*sizeof(uint8_t);
         //TODO implemented only a single instruction parsing, change to a list!
-        dm->len = ntohl(sm->len);
-        ofl_exp_beba_inst_unpack ((struct ofp_instruction *)&(sm->instr[0]), len, (struct ofl_instruction_header **)&(dm->instr[0]));
+        dm->len = ntohs(sm->len);
+        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_REACT_EXP_INSTR instr_len %u [Msg_len: %zu]" , dm->len, *len);
+        dm->instr = xmalloc(sizeof(struct ofl_instruction_header *));
+        ofl_exp_beba_inst_unpack ((struct ofp_instruction *)&(sm->instr[0]), len, dm->instr);
         }
     else {
        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_REACT_EXP_INSTR is too short (%zu)", *len);
        return ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
     }
+
     return 0;
 }
 
@@ -1583,7 +1584,7 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
     }
 
     exp = (struct ofp_instruction_experimenter_header *) src;
-
+    //OFL_LOG_WARN(LOG_MODULE, "Received EXPERIMENTER instruction %u", ntohs(exp->len));
     if (*len < ntohs(exp->len)) {
         OFL_LOG_WARN(LOG_MODULE, "Received instruction has invalid length (set to %u, but only %zu received).", ntohs(exp->len), *len);
         return ofl_error(OFPET_BAD_ACTION, OFPBAC_BAD_LEN);
@@ -1593,6 +1594,7 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
     struct ofp_beba_instruction_experimenter_header *beba_exp = (struct ofp_beba_instruction_experimenter_header *) exp;
     switch (ntohl(beba_exp->instr_type)) {
         case OFPIT_IN_SWITCH_PKT_GEN: {
+            OFL_LOG_WARN(LOG_MODULE, "Received BEBA instruction %u", ntohl(beba_exp->instr_type));
             struct ofp_exp_instruction_in_switch_pkt_gen *si;
             struct ofl_exp_instruction_in_switch_pkt_gen *di;
             struct ofp_action_header *act;
@@ -1603,7 +1605,7 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
             inst = (struct ofl_instruction_header *)di;
 
             if (ilen < sizeof(struct ofp_exp_instruction_in_switch_pkt_gen)) {
-                OFL_LOG_WARN(LOG_MODULE, "Received IN_SWITCH_PKT_GEN instruction has invalid length (%zu).", *len);
+                OFL_LOG_DBG(LOG_MODULE, "Received IN_SWITCH_PKT_GEN instruction has invalid length (%zu).", *len);
                 error = ofl_error(OFPET_EXPERIMENTER, OFPEC_BAD_EXP_LEN);
             }
 
@@ -1621,6 +1623,7 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
             di->actions = (struct ofl_action_header **)malloc(di->actions_num * sizeof(struct ofl_action_header *));
 
             act = si->actions;
+            //OFL_LOG_WARN(LOG_MODULE, "Parsing OFPIT_IN_SWITCH_PKT_GEN: pkttmp_id: %u actions_num: %u",di->pkttmp_id, di->actions_num); //AM remove
             for (i = 0; i < di->actions_num; i++) {
                 // TODO We may need to pass the ofl_exp callbacks instead of NULL
                 //error = ofl_actions_unpack(act, &ilen, &(di->actions[i]), exp);
@@ -1630,13 +1633,12 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
                 }
                 act = (struct ofp_action_header *)((uint8_t *)act + ntohs(act->len));
             }
-
             break;
         }
         case OFPIT_PORT_MOD: {
             struct ofp_exp_instruction_port_mod *si;
             struct ofl_exp_instruction_port_mod *di;
-            //OFL_LOG_WARN(LOG_MODULE, "Parsing OFPIT_PORT_MOD");
+            OFL_LOG_DBG(LOG_MODULE, "Parsing OFPIT_PORT_MOD");
             di = (struct ofl_exp_instruction_port_mod *)malloc(sizeof(struct ofl_exp_instruction_port_mod));
             di->header.header.experimenter_id  = ntohl(exp->experimenter); //BEBA_VENDOR_ID
             inst = (struct ofl_instruction_header *)di;
@@ -2347,7 +2349,7 @@ handle_pkttmp_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,
 ofl_err
 handle_event_mod(struct pipeline *pl, struct ofl_exp_msg_event_mod *msg,
                                                 const struct sender *sender) {
-    OFL_LOG_DBG(LOG_MODULE, "Handling EVENT_MOD");
+    OFL_LOG_WARN(LOG_MODULE, "Handling EVENT_MOD");
     /* TODO: complete handling of creating and deleting pkttmp entry */
     switch (msg->command){
         case OFPSC_ADD_EVENT:{
@@ -2364,7 +2366,13 @@ handle_event_mod(struct pipeline *pl, struct ofl_exp_msg_event_mod *msg,
                             struct portfail_entry *pfl;
                             //struct ofl_instruction_header **instr => struct ofl_instruction_experimenter *inst;
                             //Currently deals only with a single instruction attached
-                            pfl = portfail_entry_create(pl->dp, pl->dp->prtfls, pst->port_no, (struct ofl_instruction_experimenter *)evr->instr[0]);
+                            struct ofl_instruction_experimenter *exp_inst = (struct ofl_instruction_experimenter *)(evr->instr[0]);
+                            struct ofl_exp_beba_instr_header *beba_inst = (struct ofl_exp_beba_instr_header*) exp_inst;
+                            struct ofl_exp_instruction_in_switch_pkt_gen *beba_insw_i =  (struct ofl_exp_instruction_in_switch_pkt_gen *) beba_inst;
+                            OFL_LOG_WARN(LOG_MODULE, "Checking PortFail Exp_ID: %u  instr_type: %u", exp_inst->experimenter_id, beba_inst->instr_type);
+                            OFL_LOG_WARN(LOG_MODULE, "Checking pkttkmp_id: %u  actions_num: %u", beba_insw_i->pkttmp_id, beba_insw_i->actions_num);
+
+                            pfl = portfail_entry_create(pl->dp, pl->dp->prtfls, pst->port_no, (struct ofl_instruction_experimenter *)(evr->instr[0]));
                             hmap_insert(&pl->dp->prtfls->entries, &pfl->node, pfl->port_no);
 
                         break;}
@@ -3282,67 +3290,12 @@ portfail_entry_create(struct datapath *dp, struct portfail_table *table, uint32_
     e->table = table;
     e->port_no = port_no;
     e->inst = inst;
-    OFL_LOG_DBG(LOG_MODULE, "Creating PortFail entry for port_no: %d, experimenter_id: %d",e->port_no, e->inst->experimenter_id);
+    OFL_LOG_WARN(LOG_MODULE, "Creating PortFail entry for port_no: %d, experimenter_id: %u",e->port_no, e->inst->experimenter_id);
     return e;
 }
 
 void
 portfail_entry_destroy(struct portfail_entry *entry) {
-    //free(entry->inst); //AM_TODO: delete an associated instruction here?
+    free(entry->inst); //AM_TODO: delete an associated instruction here?
     free(entry);
-}
-
-struct portfail_entry *
-portfail_entry_create_manual(struct datapath *dp, struct portfail_table *table, uint32_t port_no) {
-    //TODO Remove after table implementation
-    //OFL_LOG_WARN(LOG_MODULE, "Creating PortFail entry for port_no: %d",port_no);
-    struct ofl_exp_instruction_in_switch_pkt_gen *beba_insw_i;
-    struct ofl_instruction_experimenter *inst;
-
-    beba_insw_i = xmalloc(sizeof(struct ofl_exp_instruction_in_switch_pkt_gen));
-    beba_insw_i->pkttmp_id = 1;
-
-    struct ofl_action_output *output_act;
-    output_act = xmalloc(sizeof(struct ofl_action_output));
-    output_act->port = 2;
-    output_act->max_len = 128;
-    output_act->header.type = OFPAT_OUTPUT;
-    output_act->header.len = sizeof(struct ofl_action_output);
-
-    beba_insw_i->actions = xmalloc(sizeof(struct ofl_action_header **) *1);
-    *(beba_insw_i->actions) = (struct ofl_action_header *) output_act;
-
-    beba_insw_i->actions_num = 1;
-
-    beba_insw_i->header.instr_type = OFPIT_IN_SWITCH_PKT_GEN;
-    beba_insw_i->header.header.experimenter_id = BEBA_VENDOR_ID;
-    beba_insw_i->header.header.header.type = OFPIT_EXPERIMENTER;
-
-    inst = (struct ofl_instruction_experimenter*) beba_insw_i;
-
-    struct portfail_entry *e;
-    e = xmalloc(sizeof(struct portfail_entry));
-    e->created = time_msec();
-    e->dp = dp;
-    e->table = table;
-    e->port_no = port_no;
-    e->inst = inst;
-
-    //OFL_LOG_WARN(LOG_MODULE, "PortFail entry created for port_no: %d, datapath: %d",e->port_no, e->dp);
-    //OFL_LOG_WARN(LOG_MODULE, "Act_pointer: type: %d, len: %d address: %d",(*act_pointer)->type, (*act_pointer)->len, *act_pointer);
-    //OFL_LOG_WARN(LOG_MODULE, "Output_action: type: %d, len: %d address: %d",output_act->header.type, output_act->header.len, &(output_act->header));
-    //OFL_LOG_WARN(LOG_MODULE, "port_fail_entry: instr_type: %d",e->inst->header.type);
-    return e;
-}
-
-void
-portfail_entry_exec(struct portfail_entry *entry, struct datapath *dp) {
-    struct packet *pkt;
-    pkt = xmalloc(sizeof(struct packet));
-    pkt->dp = dp;
-    pkt->buffer = NULL;
-    //dp_exp_inst(pkt, entry->inst);
-    OFL_LOG_WARN(LOG_MODULE, "Portfail entry executed for failed port_no: %d", entry->port_no);
-    free (entry);
-    free(pkt);
 }

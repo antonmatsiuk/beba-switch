@@ -104,13 +104,13 @@ struct ofl_exp_del_pkttmp {
 struct ofl_exp_msg_event_mod {
     struct ofl_exp_beba_msg_header header;   /* OFP_EXP_EVENT_MOD */
     enum ofp_exp_msg_event_mod_commands command;
-    uint8_t payload[OFPSC_MAX_KEY_LEN+16]; //Ugly Size, calculate properly
+    uint8_t payload[25]; //Ugly Size
 };
 
 struct ofl_exp_add_event_mod {
 	uint32_t event_id;
     enum ofp_event_type event_type; /* one of enum ofp_event_type */
-    uint8_t payload[OFPSC_MAX_KEY_LEN+10]; //Ugly Size
+    uint8_t payload[19]; //Ugly Size
 };
 
 struct ofl_exp_del_event_mod {
@@ -121,7 +121,7 @@ struct ofl_exp_event_port_state {
 	uint32_t port_no; /*Port number to track for state changes */
 	uint32_t state; /* Bitmap of OFPPS_* flags which trigger the event */
     enum ofp_event_reaction_type react_type; /* one of ofp_event_reaction_type */
-    uint8_t payload[OFPSC_MAX_KEY_LEN]; //Ugly Size calculate properly
+    uint8_t payload[10]; //Ugly Size calculate properly
 };
 
 struct ofl_exp_event_react_exp_instr{
@@ -542,9 +542,6 @@ ofl_err
 handle_pkttmp_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,
                                                 const struct sender *sender);
 
-
-
-
 /*************************************************************************/
 /*                        experimenter portfail table					*/
 /*************************************************************************/
@@ -561,15 +558,7 @@ struct portfail_entry {
     struct datapath             *dp;
     struct portfail_table       *table;
     uint64_t                    created;
-    //This implementation allows only generation of a single pkttmp, change to a list in the future!
-    struct ofl_instruction_experimenter *inst;
-};
-
-struct portfail_entry_manual {
-    uint32_t                    port_no;
-    struct datapath             *dp;
-    uint64_t                    created;
-    //This implementation allows only generation of a single pkttmp, change to a list in the future!
+    //This implementation allows only generation of a single pkttmp, change to a list **instr!
     struct ofl_instruction_experimenter *inst;
 };
 
@@ -586,13 +575,7 @@ struct portfail_entry *
 portfail_entry_create(struct datapath *dp, struct portfail_table *table, uint32_t port_no, struct ofl_instruction_experimenter *inst);
 
 void
-portfail_entry_exec(struct portfail_entry *entry, struct datapath *dp);
-
-void
 portfail_entry_destroy(struct portfail_entry *entry);
-
-//ofl_err Do we need this for fail_pkttmp_table ?
-//handle_event_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,const struct sender *sender);
 
 uint32_t
 get_experimenter_id(struct ofl_msg_header const *msg);

@@ -158,8 +158,6 @@ dp_exp_inst(struct packet *pkt UNUSED, struct ofl_instruction_experimenter *inst
 
 						// The pkt generation never leads to a PACKET_IN message,
 						// thus, the cookie value is not required and set to 0
-                        //AM: Remove
-                        //VLOG_WARN_RL(LOG_MODULE, &rl, "Created buffer for Pkttmp_id: %u len: %u", pkttmp->pkttmp_id, pkttmp->data_length);
 						dp_execute_action_list(gen_pkt, beba_insw_i->actions_num,
 								beba_insw_i->actions, 0);
 						if(gen_pkt) {
@@ -178,7 +176,6 @@ dp_exp_inst(struct packet *pkt UNUSED, struct ofl_instruction_experimenter *inst
 							(struct ofl_exp_instruction_port_mod *) beba_inst;
     					// ** Port Modification **
                     ofl_err err;
-                    //err = dp_ports_handle_exp_instr_port_mod(pkt->dp, beba_port_i);
                     VLOG_WARN_RL(LOG_MODULE, &rl, "OFPIT_PORT_MOD execution....");
                     err = dp_ports_handle_exp_instr_port_mod(pkt->dp, beba_port_i->port_no,
                                 beba_port_i->config, beba_port_i->mask);
@@ -189,12 +186,10 @@ dp_exp_inst(struct packet *pkt UNUSED, struct ofl_instruction_experimenter *inst
                     VLOG_DBG_RL(LOG_MODULE, &rl, "PORT_MOD instruction executed!");
 	         		return;
 				}
+                default:
+                VLOG_WARN_RL(LOG_MODULE, &rl, "Unknown BEBA instruction type: %u", beba_inst->instr_type);
+                return;
 			}
-
-
-			// TODO Perform packet generation instruction
-			VLOG_WARN_RL(LOG_MODULE, &rl, "Unknown BEBA instruction type!");
-			return;
 		}
 		default: {
 			VLOG_WARN_RL(LOG_MODULE, &rl, "Trying to execute unknown experimenter instruction (%u).", inst->experimenter_id);

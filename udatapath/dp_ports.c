@@ -737,31 +737,42 @@ dp_port_stats_update(struct sw_port *port) {
     port->stats->duration_nsec = ((time_msec() - port->created) % 1000) * 1000000;
 }
 
+
 void
-dp_port_live_update(struct sw_port *p) {
-
-  if((p->conf->state & OFPPS_LINK_DOWN)
-     || (p->conf->config & OFPPC_PORT_DOWN)) {
-      /* Port not live */
-      p->conf->state &= ~OFPPS_LIVE;
-      if (p->conf->port_no == 1) {
-          static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 50);
-          VLOG_WARN_RL(LOG_MODULE, &rl, "Port %d is dead ", p->conf->port_no);
-          struct portfail_entry *entry;
-          entry = portfail_entry_create_manual(p->dp, p->dp->prtfls, p->conf->port_no);
-
-          //portfail_entry_exec(entry, p->dp);
-
+portfail_entry_exec(struct sw_port *p) {
+       static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 50);
+      VLOG_WARN_RL(LOG_MODULE, &rl, "Port %u is dead ", p->conf->port_no);
+      struct portfail_entry *entry;
+      uint8_t found = 0;
+      HMAP_FOR_EACH_WITH_HASH(entry, struct portfail_entry, node,
+          p->conf->port_no, &(p->dp->prtfls)->entries) {
+          VLOG_WARN_RL(LOG_MODULE, &rl, "Retrieving: port_fail for port_no: %u!", p->conf->port_no);
+          found = 1;
           struct packet *pkt;
           pkt = xmalloc(sizeof(struct packet));
           pkt->dp = p->dp;
           pkt->buffer = NULL;
-          VLOG_WARN_RL(LOG_MODULE, &rl, "portfail entry created -> port: %d", entry->port_no);
           dp_exp_inst(pkt, entry->inst);
-          VLOG_WARN_RL(LOG_MODULE, &rl, "Portfail entry executed -> port_no: %d", entry->port_no);
-          free (entry);
+          VLOG_WARN_RL(LOG_MODULE, &rl, "Portfail entry executed -> port_no: %u", entry->port_no);
+          //free (entry);
           free(pkt);
-          }
+      }
+      if (!found) {
+          VLOG_WARN_RL(LOG_MODULE, &rl, "No port_fail entry for port_no: %u!", p->conf->port_no);
+      }
+}
+
+
+void
+dp_port_live_update(struct sw_port *p) {
+
+  if((p->conf->state & OFPPS_LINK_DOWN) || (p->conf->config & OFPPC_PORT_DOWN)) {
+      /* Port not live */
+    p->conf->state &= ~OFPPS_LIVE;
+    if (p->conf->port_no <= 268435200) {
+    //execute only for physical ports
+    portfail_entry_exec(p); //AM
+    }
   } else {
       /* Port is live */
       p->conf->state |= OFPPS_LIVE;
