@@ -708,9 +708,9 @@ dp_ports_handle_port_mod(struct datapath *dp, struct ofl_msg_port_mod *msg, cons
 
 
 ofl_err
-//dp_ports_handle_exp_instr_port_mod(struct datapath *dp, struct ofl_exp_instruction_port_mod *msg) {
 dp_ports_handle_exp_instr_port_mod(struct datapath *dp, uint32_t port_no, uint32_t config, uint32_t mask){
     struct sw_port *p;
+    struct ofl_msg_port_status not_msg;
     p = dp_ports_lookup(dp, port_no);
 
     if (p == NULL) {
@@ -724,10 +724,15 @@ dp_ports_handle_exp_instr_port_mod(struct datapath *dp, uint32_t port_no, uint32
         p->conf->config |= config&mask;
         dp_port_live_update(p);
         VLOG_WARN_RL(LOG_MODULE, &rl, "Port %d updated: config: %d ,mask:% d", p->conf->port_no, p->conf->config, mask);
-        }
 
+        //CHECK! Notify controllers
+        not_msg = (struct ofl_msg_port_status)
+        {	{.type = OFPT_PORT_STATUS},
+        .reason = OFPPR_MODIFY, .desc = p->conf
+        };
+        dp_send_message(dp, (struct ofl_msg_header *)&not_msg, NULL/*sender*/);
+        }
     }
-    //TODO Notify controllers
     return 0;
 }
 
@@ -740,25 +745,24 @@ dp_port_stats_update(struct sw_port *port) {
 
 void
 portfail_entry_exec(struct sw_port *p) {
-       static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 50);
-      VLOG_WARN_RL(LOG_MODULE, &rl, "Port %u is dead ", p->conf->port_no);
+      static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 50);
       struct portfail_entry *entry;
       uint8_t found = 0;
       HMAP_FOR_EACH_WITH_HASH(entry, struct portfail_entry, node,
           p->conf->port_no, &(p->dp->prtfls)->entries) {
-          VLOG_WARN_RL(LOG_MODULE, &rl, "Retrieving: port_fail for port_no: %u!", p->conf->port_no);
+          VLOG_DBG_RL(LOG_MODULE, &rl, "Retrieving: port_fail for port_no: %u!", p->conf->port_no);
           found = 1;
           struct packet *pkt;
           pkt = xmalloc(sizeof(struct packet));
           pkt->dp = p->dp;
           pkt->buffer = NULL;
           dp_exp_inst(pkt, entry->inst);
-          VLOG_WARN_RL(LOG_MODULE, &rl, "Portfail entry executed -> port_no: %u", entry->port_no);
-          //free (entry);
+          VLOG_DBG_RL(LOG_MODULE, &rl, "Portfail entry executed -> port_no: %u", entry->port_no);
+          //free (entry); //Unable to execute subsequent events if free
           free(pkt);
       }
       if (!found) {
-          VLOG_WARN_RL(LOG_MODULE, &rl, "No port_fail entry for port_no: %u!", p->conf->port_no);
+          VLOG_DBG_RL(LOG_MODULE, &rl, "No port_fail entry for port_no: %u!", p->conf->port_no);
       }
 }
 
@@ -770,7 +774,7 @@ dp_port_live_update(struct sw_port *p) {
       /* Port not live */
     p->conf->state &= ~OFPPS_LIVE;
     if (p->conf->port_no <= 268435200) {
-    //execute only for physical ports
+    //execute port_fail entries only for physical ports
     portfail_entry_exec(p); //AM
     }
   } else {

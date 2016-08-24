@@ -76,9 +76,9 @@ ofl_structs_event_react_exp_instr_unpack(struct ofp_exp_event_react_exp_instr *s
 
     if( *len >= 4*sizeof(uint8_t)) {
         *len -= 4*sizeof(uint8_t);
-        //TODO implemented only a single instruction parsing, change to a list!
+        //AM TODO implemented only a single instruction parsing, change to a list!
         dm->len = ntohs(sm->len);
-        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_REACT_EXP_INSTR instr_len %u [Msg_len: %zu]" , dm->len, *len);
+        OFL_LOG_DBG(LOG_MODULE, "Received EVENT_REACT_EXP_INSTR instr_len %u [Msg_len: %zu]" , dm->len, *len);
         dm->instr = xmalloc(sizeof(struct ofl_instruction_header *));
         ofl_exp_beba_inst_unpack ((struct ofp_instruction *)&(sm->instr[0]), len, dm->instr);
         }
@@ -97,7 +97,7 @@ ofl_structs_event_port_state_unpack (struct ofp_exp_event_port_state *sm, size_t
         dm->port_no = ntohl(sm->port_no);
         dm->state = ntohl(sm->state);
         dm->react_type = ntohl(sm->react_type);
-        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_PORT_STATE message fpr port_no: (%d) react_type: (%d) [Msg_len: %zu]", dm->port_no, dm->react_type, *len);
+        OFL_LOG_DBG(LOG_MODULE, "Received EVENT_PORT_STATE message fpr port_no: (%d) react_type: (%d) [Msg_len: %zu]", dm->port_no, dm->react_type, *len);
         *len -= 12*sizeof(uint8_t);
         switch (dm->react_type){
             case OFP_EXP_INSTRUCTION:
@@ -120,6 +120,7 @@ ofl_structs_del_event_mod_unpack(struct ofp_exp_del_event_mod *sm, size_t *len, 
         dm->event_id = ntohl(sm->event_id);
                 OFL_LOG_DBG(LOG_MODULE, "Received EVENT_DEL_MOD message  event_id: (%d) t [Msg_len: %zu]", dm->event_id, *len);
        *len -= 6*sizeof(uint8_t);
+       //AM TODO Implement handling of del_event_mod
     }
     else {
        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_DEL_MOD is too short (%zu)", *len);
@@ -134,8 +135,7 @@ ofl_structs_add_event_mod_unpack(struct ofp_exp_add_event_mod *sm, size_t *len, 
     if( *len >= 6*sizeof(uint8_t)) {
         dm->event_id = ntohl(sm->event_id);
         dm->event_type = ntohs(sm->event_type);
-        OFL_LOG_WARN(LOG_MODULE, "sizeof(struct ofp_exp_add_event_mod): %d", sizeof(struct ofp_exp_add_event_mod));
-        OFL_LOG_WARN(LOG_MODULE, "Received EVENT_ADD_MOD message to set event_id: (%d) type: (%d) [Msg_len: %zu]", dm->event_id, dm->event_type, *len);
+        OFL_LOG_DBG(LOG_MODULE, "Received EVENT_ADD_MOD message to set event_id: (%d) type: (%d) [Msg_len: %zu]", dm->event_id, dm->event_type, *len);
        *len -= 6*sizeof(uint8_t);
         switch ntohs(dm->event_type){
             case PORT_STATE:
@@ -1638,7 +1638,6 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
         case OFPIT_PORT_MOD: {
             struct ofp_exp_instruction_port_mod *si;
             struct ofl_exp_instruction_port_mod *di;
-            OFL_LOG_DBG(LOG_MODULE, "Parsing OFPIT_PORT_MOD");
             di = (struct ofl_exp_instruction_port_mod *)malloc(sizeof(struct ofl_exp_instruction_port_mod));
             di->header.header.experimenter_id  = ntohl(exp->experimenter); //BEBA_VENDOR_ID
             inst = (struct ofl_instruction_header *)di;
@@ -1649,7 +1648,6 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
             }
 
             ilen -= sizeof(struct ofp_exp_instruction_port_mod);
-
             si = (struct ofp_exp_instruction_port_mod *)src;
             di->header.instr_type = ntohl(beba_exp->instr_type); //OFPIT_PORT_MOD
             di->port_no = ntohl(si->port_no);
@@ -2349,35 +2347,31 @@ handle_pkttmp_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,
 ofl_err
 handle_event_mod(struct pipeline *pl, struct ofl_exp_msg_event_mod *msg,
                                                 const struct sender *sender) {
-    OFL_LOG_WARN(LOG_MODULE, "Handling EVENT_MOD");
-    /* TODO: complete handling of creating and deleting pkttmp entry */
+
     switch (msg->command){
         case OFPSC_ADD_EVENT:{
             struct ofl_exp_add_event_mod *ev = (struct ofl_exp_add_event_mod *) msg->payload;
-
             switch (ev->event_type){
                 case PORT_STATE:{
                     struct ofl_exp_event_port_state *pst = (struct ofl_exp_event_port_state *)ev->payload;
-                    //check the state, currently only portfail state implemented;
-                    //if (pst->port_state == ..
-                    switch (pst->react_type){
-                        case OFP_EXP_INSTRUCTION:{
-                            struct ofl_exp_event_react_exp_instr *evr = (struct ofl_exp_event_react_exp_instr *)pst->payload;
-                            struct portfail_entry *pfl;
-                            //struct ofl_instruction_header **instr => struct ofl_instruction_experimenter *inst;
-                            //Currently deals only with a single instruction attached
-                            struct ofl_instruction_experimenter *exp_inst = (struct ofl_instruction_experimenter *)(evr->instr[0]);
-                            struct ofl_exp_beba_instr_header *beba_inst = (struct ofl_exp_beba_instr_header*) exp_inst;
-                            struct ofl_exp_instruction_in_switch_pkt_gen *beba_insw_i =  (struct ofl_exp_instruction_in_switch_pkt_gen *) beba_inst;
-                            OFL_LOG_WARN(LOG_MODULE, "Checking PortFail Exp_ID: %u  instr_type: %u", exp_inst->experimenter_id, beba_inst->instr_type);
-                            OFL_LOG_WARN(LOG_MODULE, "Checking pkttkmp_id: %u  actions_num: %u", beba_insw_i->pkttmp_id, beba_insw_i->actions_num);
+                    if (pst->state == 1){
+                    //OFPPS_LINK_DOWN
+                        switch (pst->react_type){
+                            case OFP_EXP_INSTRUCTION:{
+                                struct ofl_exp_event_react_exp_instr *evr = (struct ofl_exp_event_react_exp_instr *)pst->payload;
+                                struct portfail_entry *pfl;
+                                //AM TODO Change to handling an array of Currently deals only with a single instruction attached
+                                OFL_LOG_DBG(LOG_MODULE, "Adding PortFail Entry to the table");
+                                pfl = portfail_entry_create(pl->dp, pl->dp->prtfls, pst->port_no, (struct ofl_instruction_experimenter *)(evr->instr[0]));
+                                hmap_insert(&pl->dp->prtfls->entries, &pfl->node, pfl->port_no);
 
-                            pfl = portfail_entry_create(pl->dp, pl->dp->prtfls, pst->port_no, (struct ofl_instruction_experimenter *)(evr->instr[0]));
-                            hmap_insert(&pl->dp->prtfls->entries, &pfl->node, pfl->port_no);
-
-                        break;}
-                        default:
-                            return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_EVENT_MOD_FAILED);
+                            break;}
+                            default:
+                                return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_EVENT_MOD_FAILED);
+                        }
+                    }
+                    else{
+                    OFL_LOG_WARN(LOG_MODULE, "OFPSC_ADD_EVENT PORT_STATE invalid state: %u", pst->state);
                     }
                 break;}
                 default:
@@ -2385,7 +2379,7 @@ handle_event_mod(struct pipeline *pl, struct ofl_exp_msg_event_mod *msg,
             }
             break;}
         case OFPSC_DEL_EVENT:{
-        //TODO Delete by event_id
+        //AM TODO Delete by event_id
         break;}
         default:
             return ofl_error(OFPET_EXPERIMENTER, OFPEC_EXP_PKTTMP_MOD_FAILED);
@@ -3258,9 +3252,7 @@ struct portfail_table *
 portfail_table_create(struct datapath *dp) {
     struct portfail_table *table;
     //size_t i;
-
-    OFL_LOG_DBG(LOG_MODULE, "Creating PortFail TABLE.");
-
+    OFL_LOG_DBG(LOG_MODULE, "Creating PortFail TABLE");
     table = xmalloc(sizeof(struct portfail_table));
     table->dp = dp;
     table->entries_num = 0;
@@ -3283,19 +3275,18 @@ portfail_entry_create(struct datapath *dp, struct portfail_table *table, uint32_
     //size_t i;
     uint64_t now;
     now = time_msec();
-
     e = xmalloc(sizeof(struct portfail_entry));
     e->created = now;
     e->dp = dp;
     e->table = table;
     e->port_no = port_no;
     e->inst = inst;
-    OFL_LOG_WARN(LOG_MODULE, "Creating PortFail entry for port_no: %d, experimenter_id: %u",e->port_no, e->inst->experimenter_id);
+    OFL_LOG_DBG(LOG_MODULE, "Creating PortFail entry for port_no: %d, experimenter_id: %u",e->port_no, e->inst->experimenter_id);
     return e;
 }
 
 void
 portfail_entry_destroy(struct portfail_entry *entry) {
-    free(entry->inst); //AM_TODO: delete an associated instruction here?
+    free(entry->inst); //AM TODO: delete an associated instruction here?
     free(entry);
 }
