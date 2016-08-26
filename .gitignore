@@ -131,3 +131,5 @@ utilities/ofp-read.o
 cscope.files
 .*.swp
 .tags
+*.cbp
+*.layout
