@@ -382,7 +382,7 @@ vcs_recv_hello(struct vconn *vconn)
         struct ofp_header *oh = b->data;
 
         if (oh->type == OFPT_HELLO) {
-            if (b->size > sizeof *oh) {
+            if (b->size > 4*sizeof *oh) {
                 struct ds msg = DS_EMPTY_INITIALIZER;
                 ds_put_format(&msg, "%s: extra-long hello:\n", vconn->name);
                 ds_put_hex_dump(&msg, b->data, b->size, 0, true);
