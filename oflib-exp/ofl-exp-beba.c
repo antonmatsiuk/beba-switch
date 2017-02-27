@@ -635,17 +635,6 @@ ofl_exp_beba_msg_to_string(struct ofl_msg_experimenter const *msg, struct ofl_ex
             OFL_LOG_DBG(LOG_MODULE, "Print Beba STATE_MOD Experimenter message BEBA_MSG{type=\"%u\", command=\"%u\"}", exp_msg->type, state_mod->command);
             break;
         }
-        case (OFPT_EXP_FLOW_NOTIFICATION):{
-            struct ofl_exp_msg_notify_flow_change * msg = (struct ofl_exp_msg_notify_flow_change *) exp;
-            int i;
-
-            OFL_LOG_DBG(LOG_MODULE, "Flow modification confirmed, flow table: \"%u\" , match fields \"%s\" ", msg->table_id, ofl_structs_match_to_string(msg->match, exp));
-            OFL_LOG_DBG(LOG_MODULE, "Instructions : ");
-            for(i=0; i<msg->instruction_num; i++){
-                OFL_LOG_DBG(LOG_MODULE, "  \"%s\"  ", ofl_instruction_type_to_string(msg->instructions[i]));
-            }
-            break;
-        }
         case (OFPT_EXP_PKTTMP_MOD):
         {
             struct ofl_exp_msg_pkttmp_mod *pkttmp_mod = (struct ofl_exp_msg_pkttmp_mod *)exp_msg;
@@ -675,8 +664,8 @@ ofl_exp_beba_msg_to_string(struct ofl_msg_experimenter const *msg, struct ofl_ex
         }
         case (OFPT_EXP_EVENT_MOD):
         {
-            struct ofl_exp_msg_event_mod *event_mod = (struct ofl_exp_msg_event_mod *)exp;
-            OFL_LOG_DBG(LOG_MODULE, "Print Beba EVENT_MOD Experimenter message BEBA_MSG{type=\"%u\", command=\"%u\"}", exp->type, event_mod->command);
+            struct ofl_exp_msg_event_mod *event_mod = (struct ofl_exp_msg_event_mod *)exp_msg;
+            OFL_LOG_DBG(LOG_MODULE, "Print Beba EVENT_MOD Experimenter message BEBA_MSG{type=\"%u\", command=\"%u\"}", exp_msg->type, event_mod->command);
             break;
         }
         default: {
@@ -1760,7 +1749,8 @@ ofl_exp_beba_inst_unpack (struct ofp_instruction const *src, size_t *len, struct
 int
 ofl_exp_beba_inst_free (struct ofl_instruction_header *i) {
     struct ofl_instruction_experimenter* exp = (struct ofl_instruction_experimenter *) i;
-        struct ofl_exp_beba_instr_header *ext = (struct ofl_exp_beba_instr_header *)exp;
+	struct ofl_exp_beba_instr_header *ext = (struct ofl_exp_beba_instr_header *)exp;
+	struct ofl_exp_instruction_in_switch_pkt_gen *instr;
         switch (ext->instr_type) {
         case (OFPIT_PORT_MOD):
         {

@@ -245,16 +245,17 @@ set_field(struct packet *pkt, struct ofl_action_set_field *act )
                 break;
             }
             case OXM_OF_SCTP_DST:{
-                crc_t crc;
-                struct sctp_header *sctp = pkt->handle_std.proto.sctp;
-                size_t len = ((uint8_t*) ofpbuf_tail(pkt->handle_std.pkt->buffer)) - (uint8_t *) sctp;
-                sctp->sctp_csum = 0;
-                sctp->sctp_dst = v;
-                crc = crc_init();
-                crc = crc_update(crc, (unsigned char*)sctp, len);
-                crc = crc_finalize(crc);
-                sctp->sctp_csum = crc;
-                break;
+                            crc_t crc;
+                            struct sctp_header *sctp = pkt->handle_std.proto.sctp;
+                            size_t len = ((uint8_t*) ofpbuf_tail(pkt->handle_std.pkt->buffer)) - (uint8_t *) sctp;
+                            uint16_t v = htons(*(uint16_t*) act->field->value);
+                            sctp->sctp_csum = 0;
+                            sctp->sctp_dst = v;
+                            crc = crc_init();
+                            crc = crc_update(crc, (unsigned char*)sctp, len);
+                            crc = crc_finalize(crc);
+                            sctp->sctp_csum = crc;
+                            break;
             }
             case OXM_OF_ICMPV4_TYPE:
             case OXM_OF_ICMPV6_TYPE:{
