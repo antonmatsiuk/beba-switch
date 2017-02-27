@@ -180,6 +180,20 @@ parse_vlan_vid(char *str, uint16_t *vid);
 static int
 parse_ext_hdr(char *str, uint16_t *ext_hdr);
 
+/**
++ * Pase the TCP flags and mask which can be in the form A/B
++ * Parameters:
++ * - flags = pointer to the flag parameter (it will be filled with value)
++ * - mask = pointer to the mask parameter. If no mask is available, the NULL value is set.
++ *          in the case of success match, memory is allocated for the element. Therefore, the
++ *          memory has to be freed out of the function!
++ *
++ * Return: Zero value in the case of success, non zero value otherwise. -1 is returned inn the case of
++ *         parsing error, -2 is returned in the case of the bad allocation of memory.
++ */
+static int
+parse_tcp_flags(char* str, uint16_t* flags, uint16_t** mask);
+
 static int
 parse8(char *str, struct names8 *names, size_t names_num, uint8_t max, uint8_t *val);
 
@@ -544,6 +558,37 @@ stats_state(struct vconn *vconn, int argc, char *argv[])
                   .type = OFPMP_EXPERIMENTER, .flags = 0x0000},
                  .experimenter_id = BEBA_VENDOR_ID},
                  .type = OFPMP_EXP_STATE_STATS},
+                 .table_id = 0xff,
+                 .get_from_state = 0,
+                 .state = 0,
+                 .match = NULL};
+    if (argc > 0) {
+        parse_state_stat_args(argv[0], &req);
+    }
+    if (argc > 1) {
+        parse_state(argv[1], &(req.get_from_state), &(req.state));
+        if(req.get_from_state && argc > 2)
+            parse_match(argv[2], &(req.match));
+        if(req.get_from_state && argc < 3)
+            make_all_match(&(req.match));
+        if(!req.get_from_state)
+            parse_match(argv[1], &(req.match));
+    }
+    else {
+        make_all_match(&(req.match));
+    }
+
+    dpctl_transact_and_print(vconn, (struct ofl_msg_header *)&req, NULL);
+}
+
+static void
+stats_state_and_delete(struct vconn *vconn, int argc, char *argv[])
+{
+    struct ofl_exp_msg_multipart_request_state req =
+             {{{{{.type = OFPT_MULTIPART_REQUEST},
+                  .type = OFPMP_EXPERIMENTER, .flags = 0x0000},
+                 .experimenter_id = BEBA_VENDOR_ID},
+                 .type = OFPMP_EXP_STATE_STATS_AND_DELETE},
                  .table_id = 0xff,
                  .get_from_state = 0,
                  .state = 0,
@@ -1026,6 +1071,7 @@ static struct command all_commands[] = {
     {"stats-desc", 0, 0, stats_desc },
     {"stats-flow", 0, 2, stats_flow},
     {"stats-state", 0, 3, stats_state},
+    {"stats-state-and-delete", 0, 3, stats_state_and_delete},
     {"stats-global-state", 0, 0, stats_global_state},
     {"stats-aggr", 0, 2, stats_aggr},
     {"stats-table", 0, 0, stats_table },
@@ -1197,6 +1243,7 @@ usage(void)
             "  SWITCH stats-flow [ARG [MATCH]]        print flow stats\n"
             "  SWITCH stats-aggr [ARG [MATCH]]        print flow aggregate stats\n"
             "  SWITCH stats-table                     print table stats\n"
+            "  SWITCH stats-state [ARG [MATCH]]       print the state table\n"
             "  SWITCH stats-port [PORT]               print port statistics\n"
             "  SWITCH stats-queue [PORT [QUEUE]]      print queue statistics\n"
             "  SWITCH stats-group [GROUP]             print group statistics\n"
@@ -1475,6 +1522,31 @@ parse_match(char *str, struct ofl_match_header **match)
                 ofp_fatal(0, "Error parsing tcp_dst: %s.", token);
             }
             else ofl_structs_match_put16(m, OXM_OF_TCP_DST,tp_dst);
+            continue;
+        }
+
+        /* TCP Flags and mask*/
+        if(strncmp(token, MATCH_TP_FLAG KEY_VAL, strlen(MATCH_TP_FLAG KEY_VAL)) == 0) {
+            uint16_t tp_flag = 0;
+            uint16_t* tp_flag_mask = NULL;
+
+            int parserStat = parse_tcp_flags(token+strlen(MATCH_TP_FLAG KEY_VAL), &tp_flag, &tp_flag_mask);
+            if(parserStat == -1) {
+                ofp_fatal(0,"Error parsing tcp_flags: %s.",token);
+            }
+            else if(parserStat == -2){
+                ofp_fatal(0,"Unable to allocate memory for the tcp_flag_mask: %s.",token);
+            }
+            else {
+               if(tp_flag_mask == NULL)
+                    ofl_structs_match_put16(m,OXM_OF_TCP_FLAGS,tp_flag);
+               else {
+                    ofl_structs_match_put16m(m,OXM_OF_TCP_FLAGS_W,tp_flag,*tp_flag_mask);
+                }
+            }
+
+            // Free allocated memory
+            free(tp_flag_mask);
             continue;
         }
 
@@ -2784,6 +2856,60 @@ parse8(char *str, struct names8 *names, size_t names_num, uint8_t max, uint8_t *
         return 0;
     }
     return -1;
+}
+
+ static int
+parse_tcp_flags(char* str, uint16_t* flags, uint16_t** mask)
+{
+    int flagsTokenParser;
+    int maskTokenParser;
+    // Temporal mask
+    uint16_t tmpMask;
+    char* str_ptr;
+    char* str_orig = strdup(str);
+    char* flagsToken;
+    char* maskToken;
+    if(str_orig == NULL) {
+         return -2;
+     }
+
+   // Prepare tokens
+   flagsToken = strtok_r(str_orig,MASK_SEP,&str_ptr);
+   maskToken = strtok_r(NULL,MASK_SEP,&str_ptr);
+
+   flagsTokenParser = sscanf(flagsToken,"%"SCNu16,flags);
+   if(maskToken != NULL)
+        maskTokenParser = sscanf(maskToken,"%"SCNu16,&tmpMask);
+
+   //Parse flags (required)
+   if(flagsToken == NULL || flagsTokenParser == 0) {
+        free(str_orig);
+        return -1;
+    }
+
+   //Parse mask (optional)
+   if(maskToken != NULL && maskTokenParser != 0) {
+        // Success, prepare place for mask setup the value
+       *mask = (uint16_t*)malloc(sizeof(uint16_t));
+        if(mask == NULL) {
+            free(str_orig);
+            return -2;
+        }
+
+        //setup the value :-)
+        **mask = tmpMask;
+   }
+   else if(maskToken == NULL) {
+        mask = NULL;
+    }
+    else {
+        // Somthing bad ...
+        free(str_orig);
+        return -1;
+    }
+
+    free(str_orig);
+    return 0;
 }
 
 static int

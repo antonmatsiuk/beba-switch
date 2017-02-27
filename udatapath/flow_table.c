@@ -48,7 +48,7 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(60, 60);
 uint32_t  oxm_ids[]={OXM_OF_IN_PORT,OXM_OF_IN_PHY_PORT,OXM_OF_METADATA,OXM_OF_ETH_DST,
                         OXM_OF_ETH_SRC,OXM_OF_ETH_TYPE, OXM_OF_VLAN_VID, OXM_OF_VLAN_PCP, OXM_OF_IP_DSCP,
                         OXM_OF_IP_ECN, OXM_OF_IP_PROTO, OXM_OF_IPV4_SRC, OXM_OF_IPV4_DST, OXM_OF_TCP_SRC,
-                        OXM_OF_TCP_DST, OXM_OF_UDP_SRC, OXM_OF_UDP_DST, OXM_OF_SCTP_SRC, OXM_OF_SCTP_DST,
+                        OXM_OF_TCP_DST, OXM_OF_TCP_FLAGS, OXM_OF_UDP_SRC, OXM_OF_UDP_DST, OXM_OF_SCTP_SRC, OXM_OF_SCTP_DST,
                         OXM_OF_ICMPV4_TYPE, OXM_OF_ICMPV4_CODE, OXM_OF_ARP_OP, OXM_OF_ARP_SPA,OXM_OF_ARP_TPA,
                         OXM_OF_ARP_SHA, OXM_OF_ARP_THA, OXM_OF_IPV6_SRC, OXM_OF_IPV6_DST, OXM_OF_IPV6_FLABEL,
                         OXM_OF_ICMPV6_TYPE, OXM_OF_ICMPV6_CODE, OXM_OF_IPV6_ND_TARGET, OXM_OF_IPV6_ND_SLL,
@@ -60,7 +60,7 @@ uint32_t  oxm_ids[]={OXM_OF_IN_PORT,OXM_OF_IN_PHY_PORT,OXM_OF_METADATA,OXM_OF_ET
  * the oxm_ids array. Jean II */
 
 uint32_t wildcarded[] = {OXM_OF_METADATA, OXM_OF_ETH_DST, OXM_OF_ETH_SRC, OXM_OF_VLAN_VID, OXM_OF_IPV4_SRC,
-                               OXM_OF_IPV4_DST, OXM_OF_ARP_SPA, OXM_OF_ARP_TPA, OXM_OF_ARP_SHA, OXM_OF_ARP_THA, OXM_OF_IPV6_SRC,
+                               OXM_OF_IPV4_DST, OXM_OF_TCP_FLAGS, OXM_OF_ARP_SPA, OXM_OF_ARP_TPA, OXM_OF_ARP_SHA, OXM_OF_ARP_THA, OXM_OF_IPV6_SRC,
                                OXM_OF_IPV6_DST , OXM_OF_IPV6_FLABEL, OXM_OF_PBB_ISID, OXM_OF_TUNNEL_ID, OXM_OF_IPV6_EXTHDR};                        
 
 #define NUM_WILD_IDS    (sizeof(wildcarded) / sizeof(uint32_t))
@@ -221,8 +221,8 @@ flow_table_lookup(struct flow_table *table, struct packet *pkt, struct ofl_exp *
         /* select appropriate handler, based on match type of flow entry. */
         switch (m->type) {
             case (OFPMT_OXM): {
-               if (packet_handle_std_match(pkt->handle_std, (struct ofl_match *)m, exp)) {
-                    if (!entry->no_byt_count)                                            
+               if (packet_handle_std_match(&pkt->handle_std, (struct ofl_match *)m, exp)) {
+                    if (!entry->no_byt_count)
                         entry->stats->byte_count += pkt->buffer->size;
                     if (!entry->no_pkt_count)
                         entry->stats->packet_count++;
@@ -408,10 +408,23 @@ flow_table_create(struct datapath *dp, uint8_t table_id) {
 void
 flow_table_destroy(struct flow_table *table) {
     struct flow_entry *entry, *next;
+    int type, j;
 
     LIST_FOR_EACH_SAFE (entry, next, struct flow_entry, match_node, &table->match_entries) {
         flow_entry_destroy(entry);
     }
+      
+    j = 0;
+    for(type = OFPTFPT_INSTRUCTIONS; type <= OFPTFPT_APPLY_SETFIELD_MISS; type++){ 
+        flow_table_destroy_property(table->features->properties[j], type);
+        if(type == OFPTFPT_MATCH|| type == OFPTFPT_WILDCARDS){
+            type++;
+        }
+        j++;
+    }
+
+    free(table->features->properties);
+    free(table->features->name);
     free(table->features);
     free(table->stats);
     state_table_destroy(table->state_table);
@@ -459,3 +472,53 @@ flow_table_aggregate_stats(struct flow_table *table, struct ofl_msg_multipart_re
 
 }
 
+void 
+flow_table_destroy_property(struct ofl_table_feature_prop_header *prop, enum ofp_table_feature_prop_type type){
+    switch(type){
+        case OFPTFPT_INSTRUCTIONS:
+        case OFPTFPT_INSTRUCTIONS_MISS:{
+            struct ofl_table_feature_prop_instructions *inst_capabilities = (struct ofl_table_feature_prop_instructions *) prop;
+            int i;
+            free(inst_capabilities->instruction_ids);
+            free(inst_capabilities);
+            break;        
+        }
+        case OFPTFPT_NEXT_TABLES:
+        case OFPTFPT_NEXT_TABLES_MISS:{
+             struct ofl_table_feature_prop_next_tables *tbl_reachable = (struct ofl_table_feature_prop_next_tables*) prop;
+             free(tbl_reachable->next_table_ids);
+             free(tbl_reachable);
+             break;
+        }
+        case OFPTFPT_APPLY_ACTIONS:
+        case OFPTFPT_APPLY_ACTIONS_MISS:
+        case OFPTFPT_WRITE_ACTIONS:
+        case OFPTFPT_WRITE_ACTIONS_MISS:{
+             struct ofl_table_feature_prop_actions *act_capabilities = (struct ofl_table_feature_prop_actions *) prop;
+             free(act_capabilities->action_ids);
+             free(act_capabilities);
+             break;
+        }
+        case OFPTFPT_MATCH:
+        case OFPTFPT_APPLY_SETFIELD:
+        case OFPTFPT_APPLY_SETFIELD_MISS:
+        case OFPTFPT_WRITE_SETFIELD:
+        case OFPTFPT_WRITE_SETFIELD_MISS:{
+            struct ofl_table_feature_prop_oxm *oxm_capabilities = (struct ofl_table_feature_prop_oxm *) prop;
+            free(oxm_capabilities->oxm_ids);
+            free(oxm_capabilities);
+            break;
+        } 
+        case OFPTFPT_WILDCARDS:{
+            struct ofl_table_feature_prop_oxm *oxm_capabilities = (struct ofl_table_feature_prop_oxm *) prop;
+            free(oxm_capabilities->oxm_ids);
+            free(oxm_capabilities);
+            break;
+        }        
+        case OFPTFPT_EXPERIMENTER:
+        case OFPTFPT_EXPERIMENTER_MISS:{
+            break;        
+        }
+    }
+    return;
+}

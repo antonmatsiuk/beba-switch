@@ -40,7 +40,9 @@
 #include "ofl.h"
 #include "ofl-actions.h"
 #include "ofl-packets.h"
+#include "compiler.h"
 #include "../lib/hmap.h"
+#include "../lib/hash.h"
 
 
 struct ofl_exp;
@@ -229,16 +231,29 @@ struct ofl_match_header {
     uint16_t   length;           /* Match length */
 };
 
+struct ofl_match_tlv {
+    struct hmap_node hmap_node;
+    uint32_t header;							/* TLV header */
+    bool	 ownership;							/* true (dynamic memory allocation) */
+    uint8_t *value;								/* TLV value ptr */
+};
+
+struct ofl_match_small_tlv {
+    struct hmap_node hmap_node;
+    uint32_t header;							/* TLV header */
+    bool	 ownership;							/* = false (memory is not to be released) */
+    uint8_t *value;								/* TLV value ptr */
+    uint8_t _storage[BEBA_MATCH_VALUE_SIZE];	/* TLV value size */
+};
+
+
 struct ofl_match {
     struct ofl_match_header   header; /* Match header */
     struct hmap match_fields;         /* Match fields. Contain OXM TLV's  */
-};
 
-struct ofl_match_tlv{
-
-    struct hmap_node hmap_node;
-    uint32_t header;    /* TLV header */
-    uint8_t *value;     /* TLV value */
+    struct ofl_match_small_tlv pool[BEBA_MATCH_POOL_SIZE];
+    size_t pool_size;
+    bool   dirty;
 };
 
 
@@ -403,47 +418,164 @@ struct ofl_meter_features {
 /****************************************************************************
  * Utility functions to match structure
  ****************************************************************************/
-void
-ofl_structs_match_init(struct ofl_match *match);
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-void
-ofl_structs_match_put8(struct ofl_match *match, uint32_t header, uint8_t value);
 
-void
-ofl_structs_match_put8m(struct ofl_match *match, uint32_t header, uint8_t value, uint8_t mask);
+static inline
+struct ofl_match_tlv *
+ofl_alloc_match_tlv(struct ofl_match *match, size_t size)
+{
+	struct ofl_match_small_tlv *s;
 
-void
-ofl_structs_match_put16(struct ofl_match *match, uint32_t header, uint16_t value);
+	if (unlikely(match->pool_size >= BEBA_MATCH_POOL_SIZE /* pool exhausted */ || size > BEBA_MATCH_VALUE_SIZE)) {
+		struct ofl_match_tlv *m = malloc(sizeof (struct ofl_match_tlv));
+		m->value = malloc(size);
+		m->ownership = true;
+		match->dirty = true;
+		return m;
+	}
 
-void
-ofl_structs_match_put16m(struct ofl_match *match, uint32_t header, uint16_t value, uint16_t mask);
+	s = &match->pool[match->pool_size++];
+	s->value = s->_storage;
+	s->ownership = false;
+	return (struct ofl_match_tlv *)s;
+}
 
-void
-ofl_structs_match_put32(struct ofl_match *match, uint32_t header, uint32_t value);
 
-void
-ofl_structs_match_put32m(struct ofl_match *match, uint32_t header, uint32_t value, uint32_t mask);
+static inline void
+ofl_structs_match_init(struct ofl_match *match)
+{
+    match->header.type = OFPMT_OXM;
+    match->header.length = 0;
+    match->match_fields = (struct hmap) HMAP_INITIALIZER(&match->match_fields);
+    match->pool_size = 0;
+    match->dirty = false;
+}
 
-void
-ofl_structs_match_put64(struct ofl_match *match, uint32_t header, uint64_t value);
 
-void
-ofl_structs_match_put64m(struct ofl_match *match, uint32_t header, uint64_t value, uint64_t mask);
+struct ofl_match_tlv *
+ofl_alloc_match_tlv(struct ofl_match *match, size_t size);
+
+static inline void
+ofl_structs_match_put8(struct ofl_match *match, uint32_t header, uint8_t value)
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, sizeof(value));
+    m->header = header;
+    memcpy(m->value, &value, sizeof(value));
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += sizeof(value) + 4;
+}
+
+
+static inline void
+ofl_structs_match_put8m(struct ofl_match *match, uint32_t header, uint8_t value, uint8_t mask)
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, sizeof(value)+sizeof(mask));
+    m->header = header;
+    memcpy(m->value, &value, sizeof(value));
+    memcpy(m->value + sizeof(value), &mask, sizeof(value));
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += sizeof(value)+sizeof(mask) + 4;
+}
+
+
+static inline void
+ofl_structs_match_put16(struct ofl_match *match, uint32_t header, uint16_t value)
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, sizeof(value));
+    m->header = header;
+    memcpy(m->value, &value, sizeof(value));
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += sizeof(value) + 4;
+}
+
+
+static inline void
+ofl_structs_match_put16m(struct ofl_match *match, uint32_t header, uint16_t value, uint16_t mask)
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, sizeof(value) + sizeof(mask));
+    m->header = header;
+    memcpy(m->value, &value, sizeof(value));
+    memcpy(m->value + sizeof(value), &mask, sizeof(mask));
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += sizeof(value)+sizeof(mask) + 4;
+}
+
+static inline void
+ofl_structs_match_put32(struct ofl_match *match, uint32_t header, uint32_t value)
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, sizeof(value));
+    m->header = header;
+    memcpy(m->value, &value, sizeof(value));
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += sizeof(value) + 4;
+
+}
+
+static inline void
+ofl_structs_match_put32m(struct ofl_match *match, uint32_t header, uint32_t value, uint32_t mask)
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, sizeof(value)+sizeof(mask));
+    m->header = header;
+    memcpy(m->value, &value, sizeof(value));
+    memcpy(m->value + sizeof(value), &mask, sizeof(mask));
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += sizeof(value)+sizeof(mask) + 4;
+
+}
+
+static inline void
+ofl_structs_match_put64(struct ofl_match *match, uint32_t header, uint64_t value)
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, sizeof(value));
+    m->header = header;
+    memcpy(m->value, &value, sizeof(value));
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += sizeof(value) + 4;
+
+}
+
+static inline void
+ofl_structs_match_put64m(struct ofl_match *match, uint32_t header, uint64_t value, uint64_t mask)
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, sizeof(value)+sizeof(mask));
+    m->header = header;
+    memcpy(m->value, &value, sizeof(value));
+    memcpy(m->value + sizeof(value), &mask, sizeof(mask));
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += sizeof(value) + sizeof(mask) + 4;
+
+}
+
+
+static inline void
+ofl_structs_match_put_eth(struct ofl_match *match, uint32_t header, uint8_t const value[ETH_ADDR_LEN])
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, ETH_ADDR_LEN);
+    m->header = header;
+    memcpy(m->value, value, ETH_ADDR_LEN);
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += ETH_ADDR_LEN + 4;
+}
+
+static inline void
+ofl_structs_match_put_eth_m(struct ofl_match *match, uint32_t header, uint8_t const value[ETH_ADDR_LEN], uint8_t const mask[ETH_ADDR_LEN])
+{
+    struct ofl_match_tlv *m = ofl_alloc_match_tlv(match, ETH_ADDR_LEN*2);
+    m->header = header;
+    memcpy(m->value, value, ETH_ADDR_LEN);
+    memcpy(m->value + ETH_ADDR_LEN, mask, ETH_ADDR_LEN);
+    hmap_insert(&match->match_fields,&m->hmap_node,hash_int(header, 0));
+    match->header.length += ETH_ADDR_LEN*2 + 4;
+}
 
 void
 ofl_structs_match_put_pbb_isid(struct ofl_match *match, uint32_t header, uint8_t const value[PBB_ISID_LEN]);
 
 void
 ofl_structs_match_put_pbb_isidm(struct ofl_match *match, uint32_t header, uint8_t const value[PBB_ISID_LEN], uint8_t const mask[PBB_ISID_LEN]);
-
-void
-ofl_structs_match_put_eth(struct ofl_match *match, uint32_t header, uint8_t const value[ETH_ADDR_LEN]);
-
-void
-ofl_structs_match_put_eth_m(struct ofl_match *match, uint32_t header, uint8_t const value[ETH_ADDR_LEN], uint8_t const mask[ETH_ADDR_LEN]);
 
 void
 ofl_structs_match_put_ipv6(struct ofl_match *match, uint32_t header, uint8_t const value[IPv6_ADDR_LEN] );

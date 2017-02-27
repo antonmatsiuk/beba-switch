@@ -1,5 +1,5 @@
 /* Copyright (c) 2011, TrafficLab, Ericsson Research, Hungary
- * Copyright (c) 2012, CPqD, Brazil 
+ * Copyright (c) 2012, CPqD, Brazil
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -136,15 +136,15 @@ handle_control_packet_out(struct datapath *dp, struct ofl_msg_packet_out *msg,
 
     if (msg->buffer_id == NO_BUFFER) {
         struct ofpbuf *buf;
-        /* If there is no packet in the message, send error message */ 
+        /* If there is no packet in the message, send error message */
         if (!msg->data_length){
              return ofl_error(OFPET_BAD_REQUEST, OFPBRC_BAD_PACKET);
         }
         /* NOTE: the created packet will take the ownership of data in msg. */
         buf = ofpbuf_new(0);
         ofpbuf_use(buf, msg->data, msg->data_length);
-        ofpbuf_put_uninit(buf, msg->data_length);        
-        pkt = packet_create(dp, msg->in_port, buf, true);        
+        ofpbuf_put_uninit(buf, msg->data_length);
+        pkt = packet_create(dp, msg->in_port, buf, true);
     } else {
         /* NOTE: in this case packet should not have data */
         pkt = dp_buffers_retrieve(dp->buffers, msg->buffer_id);
@@ -154,11 +154,11 @@ handle_control_packet_out(struct datapath *dp, struct ofl_msg_packet_out *msg,
         /* This might be a wrong req., or a timed out buffer */
         return ofl_error(OFPET_BAD_REQUEST, OFPBRC_BUFFER_EMPTY);
     }
-    
+
     dp_execute_action_list(pkt, msg->actions_num, msg->actions, 0xffffffffffffffff);
 
     packet_destroy(pkt);
-    ofl_msg_free_packet_out(msg, false, dp->exp);    
+    ofl_msg_free_packet_out(msg, false, dp->exp);
     return 0;
 }
 
@@ -215,20 +215,20 @@ handle_control_stats_request(struct datapath *dp,
         case (OFPMP_GROUP_DESC): {
             return group_table_handle_stats_request_group_desc(dp->groups, msg, sender);
         }
-		case (OFPMP_GROUP_FEATURES):{
-            return group_table_handle_stats_request_group_features(dp->groups, msg, sender);			
-		}		
+        case (OFPMP_GROUP_FEATURES):{
+            return group_table_handle_stats_request_group_features(dp->groups, msg, sender);
+        }
         case (OFPMP_METER):{
-        	return meter_table_handle_stats_request_meter(dp->meters,(struct ofl_msg_multipart_meter_request*)msg, sender);
+            return meter_table_handle_stats_request_meter(dp->meters,(struct ofl_msg_multipart_meter_request*)msg, sender);
         }
         case (OFPMP_METER_CONFIG):{
-            return meter_table_handle_stats_request_meter_conf(dp->meters,(struct ofl_msg_multipart_meter_request*)msg, sender);        
+            return meter_table_handle_stats_request_meter_conf(dp->meters,(struct ofl_msg_multipart_meter_request*)msg, sender);
         }
         case OFPMP_METER_FEATURES:{
             return meter_table_handle_features_request(dp->meters, msg, sender);
         }
         case OFPMP_PORT_DESC:{
-            return dp_ports_handle_port_desc_request(dp, msg, sender);        
+            return dp_ports_handle_port_desc_request(dp, msg, sender);
         }
         case (OFPMP_EXPERIMENTER): {
             return dp_exp_stats(dp, (struct ofl_msg_multipart_request_experimenter *)msg, sender);
@@ -324,36 +324,7 @@ handle_control_msg(struct datapath *dp, struct ofl_msg_header *msg,
             return ofl_error(OFPET_BAD_REQUEST, OFPBRC_BAD_TYPE);
         }
         case OFPT_FLOW_MOD: {
-            ofl_err res;
-            int i;
-            struct ofl_instruction_header * instruction;
-
-            /* State Sync: Notification is sent to acknowledge a flow modification */
-            res = pipeline_handle_flow_mod(dp->pipeline, (struct ofl_msg_flow_mod *)msg, sender);
-
-            if(!res) {
-                struct ofl_msg_flow_mod *m = (struct ofl_msg_flow_mod *)msg;
-                struct ofl_exp_msg_notify_flow_change ntf = {{{{.type = OFPT_EXPERIMENTER},
-                                                               .experimenter_id = BEBA_VENDOR_ID},
-                                                               .type = OFPT_EXP_FLOW_NOTIFICATION},
-                                                               .ntf_type = OFPT_FLOW_MOD,
-                                                               .table_id = m->table_id,
-                                                               .match = m->match,
-                                                               .instruction_num = m->instructions_num,
-                                                               .instructions = NULL};
-                if (ntf.instruction_num>0){
-                    ntf.instructions = (uint32_t *) malloc(ntf.instruction_num * sizeof(uint32_t));
-                    instruction = *(m->instructions);
-                    for(i=0;i<ntf.instruction_num;i++){
-                        ntf.instructions[i] = instruction[i].type;
-                    }
-                }
-
-                dp_send_message(dp,(struct ofl_msg_header*)&ntf, sender);
-                if (ntf.instructions != NULL) free(ntf.instructions);
-            }
-
-            return res;
+            return pipeline_handle_flow_mod(dp->pipeline, (struct ofl_msg_flow_mod *)msg, sender);
         }
         case OFPT_GROUP_MOD: {
             return group_table_handle_group_mod(dp->groups, (struct ofl_msg_group_mod *)msg, sender);
@@ -389,8 +360,8 @@ handle_control_msg(struct datapath *dp, struct ofl_msg_header *msg,
             return ofl_error(OFPET_BAD_REQUEST, OFPBRC_BAD_TYPE);
         }
         case OFPT_METER_MOD:{
-			return meter_table_handle_meter_mod(dp->meters, (struct ofl_msg_meter_mod *)msg, sender);
-		}
+            return meter_table_handle_meter_mod(dp->meters, (struct ofl_msg_meter_mod *)msg, sender);
+        }
         case OFPT_EXPERIMENTER: {
             return dp_exp_message(dp, (struct ofl_msg_experimenter *)msg, sender);
         }

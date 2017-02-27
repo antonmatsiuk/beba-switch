@@ -37,19 +37,19 @@ struct ofp_beba_instruction_experimenter_header {
 OFP_ASSERT(sizeof(struct ofp_beba_instruction_experimenter_header) == 16);
 
 struct ofp_exp_instruction_in_switch_pkt_gen {
-	struct ofp_beba_instruction_experimenter_header header; /* OpenFlow standard experimenter instruction header */
-	uint32_t pkttmp_id;
-	uint8_t pad[4];
-	struct ofp_action_header actions[0]; /* Same actions that can be associated with OFPIT_APPLY_ACTIONS */
+    struct ofp_beba_instruction_experimenter_header header; /* OpenFlow standard experimenter instruction header */
+    uint32_t pkttmp_id;
+    uint8_t pad[4];
+    struct ofp_action_header actions[0]; /* Same actions that can be associated with OFPIT_APPLY_ACTIONS */
 };
 OFP_ASSERT(sizeof(struct ofp_exp_instruction_in_switch_pkt_gen) == 24);
 
 struct ofp_exp_instruction_port_mod {
-	struct ofp_beba_instruction_experimenter_header header; /* OpenFlow standard experimenter instruction header */
-	uint32_t	port_no;
-	uint32_t    config;               /* Bitmap of OFPPC_* flags. */
-	uint32_t    mask;                 /* Bitmap of OFPPC_* flags to be changed. */
-	uint8_t pad[4];
+    struct ofp_beba_instruction_experimenter_header header; /* OpenFlow standard experimenter instruction header */
+    uint32_t    port_no;
+    uint32_t    config;               /* Bitmap of OFPPC_* flags. */
+    uint32_t    mask;                 /* Bitmap of OFPPC_* flags to be changed. */
+    uint8_t pad[4];
 };
 OFP_ASSERT(sizeof(struct ofp_exp_instruction_port_mod) == 32);
 
@@ -60,7 +60,8 @@ OFP_ASSERT(sizeof(struct ofp_exp_instruction_port_mod) == 32);
  ****************************************************************/
 enum ofp_exp_actions {
     OFPAT_EXP_SET_STATE,
-    OFPAT_EXP_SET_GLOBAL_STATE
+    OFPAT_EXP_SET_GLOBAL_STATE,
+    OFPAT_EXP_INC_STATE
 };
 
 struct ofp_beba_action_experimenter_header {
@@ -81,7 +82,8 @@ struct ofp_exp_action_set_state {
     uint32_t idle_rollback;
     uint32_t hard_timeout;
     uint32_t idle_timeout;
-    uint8_t pad2[4];   /* Align to 64-bits. */
+    uint8_t bit; /* Swapping bit */
+    uint8_t pad2[3];   /* Align to 64-bits. */
 };
 OFP_ASSERT(sizeof(struct ofp_exp_action_set_state) == 48);
 
@@ -94,6 +96,13 @@ struct ofp_exp_action_set_global_state {
 };
 OFP_ASSERT(sizeof(struct ofp_exp_action_set_global_state) == 24);
 
+/* Action structure for OFPAT_EXP_INC_STATE */
+struct ofp_exp_action_inc_state {
+    struct ofp_beba_action_experimenter_header header;
+    uint8_t table_id;
+    uint8_t pad[7];
+};
+OFP_ASSERT(sizeof(struct ofp_exp_action_inc_state) == 24);
 
 /*EXPERIMENTER MESSAGES*/
 /*
@@ -164,7 +173,7 @@ struct ofp_exp_msg_state_ntf {
  * Useful for bulk updates
  */
 struct ofp_exp_msg_flow_ntf {
-    struct   ofp_experimenter_header header; // OpenFlow's standard experimenter
+    struct   ofp_experimenter_header header;
     uint32_t table_id;
     uint32_t ntf_type;
     struct   ofp_match match;
@@ -178,6 +187,8 @@ struct ofp_exp_stateful_table_config {
 struct ofp_exp_set_extractor {
     uint8_t table_id;
     uint8_t pad[3];
+    uint8_t bit;
+    uint8_t pad2[3];
     uint32_t field_count;
     uint32_t fields[OFPSC_MAX_FIELD_COUNT];
 };
@@ -231,15 +242,15 @@ struct ofp_exp_msg_pkttmp_mod {
 };
 
 struct ofp_exp_add_pkttmp {
-	uint32_t pkttmp_id;
-	uint8_t pad[4];
-	/* uint8_t data[0]; */ /* Packet data. The length is inferred
-			from the length field in the header. */
+    uint32_t pkttmp_id;
+    uint8_t pad[4];
+    /* uint8_t data[0]; */ /* Packet data. The length is inferred
+            from the length field in the header. */
 };
 
 struct ofp_exp_del_pkttmp {
-	uint32_t pkttmp_id;
-	uint8_t pad[4];
+    uint32_t pkttmp_id;
+    uint8_t pad[4];
 };
 
 enum ofp_exp_msg_pkttmp_mod_commands {
@@ -276,21 +287,21 @@ struct ofp_exp_msg_event_mod {
 };
 
 struct ofp_exp_add_event_mod {
-	uint32_t event_id;
+    uint32_t event_id;
     uint16_t event_type; /* one of enum ofp_event_type */
     uint8_t payload[];
 };
 
 struct ofp_exp_del_event_mod {
-	uint32_t event_id;
+    uint32_t event_id;
     uint8_t pad[2];
 };
 
 struct ofp_exp_event_port_state {
-	uint32_t port_no; /*Port number to track for state changes */
-	uint32_t state; /* Bitmap of OFPPS_* flags which trigger the event */
+    uint32_t port_no; /*Port number to track for state changes */
+    uint32_t state; /* Bitmap of OFPPS_* flags which trigger the event */
     uint16_t react_type; /* one of ofp_event_reaction_type */
-	uint8_t pad [2];
+    uint8_t pad [2];
     uint8_t payload[]; /*currently only generation of pkttmp is implemented */
 };
 
@@ -306,7 +317,8 @@ struct ofp_exp_event_react_exp_instr{
 ****************************************************************/
 enum ofp_stats_extension_commands {
     OFPMP_EXP_STATE_STATS,
-    OFPMP_EXP_GLOBAL_STATE_STATS
+    OFPMP_EXP_GLOBAL_STATE_STATS,
+    OFPMP_EXP_STATE_STATS_AND_DELETE
 };
 
 struct ofp_exp_state_entry{

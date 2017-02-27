@@ -78,6 +78,8 @@ void masked_value_print(char *string,char *global_state, char *global_state_mask
         }
         string[32]='\0';
     }
+    free(global_state);
+    free(global_state_mask);
 }
 
 
@@ -322,6 +324,7 @@ ofl_oxm_type_print(FILE *stream, uint32_t type)
     case OXM_OF_IPV4_DST:           {fprintf(stream, "ipv4_dst"); return; }
     case OXM_OF_TCP_SRC:            {fprintf(stream, "tcp_src"); return; }
     case OXM_OF_TCP_DST:            {fprintf(stream, "tcp_dst"); return; }
+    case OXM_OF_TCP_FLAGS:          {fprintf(stream, "tcp_flags"); return; }
     case OXM_OF_UDP_SRC:            {fprintf(stream, "udp_src"); return; }
     case OXM_OF_UDP_DST:            {fprintf(stream, "udp_dst"); return; }
     case OXM_OF_SCTP_SRC:           {fprintf(stream, "sctp_src"); return; }

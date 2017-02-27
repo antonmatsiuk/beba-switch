@@ -6,6 +6,7 @@
 #include "../udatapath/pipeline.h"
 #include "../oflib/ofl-structs.h"
 #include "../oflib/ofl-messages.h"
+#include "../oflib/oxm-match.h"
 #include "../include/openflow/beba-ext.h"
 
 
@@ -13,6 +14,7 @@
 #define MAX_STATE_KEY_LEN 48
 
 #define STATE_DEFAULT 0
+#define STATE_NULL UINT32_MAX
 /**************************************************************************/
 /*                        experimenter messages ofl_exp                   */
 /**************************************************************************/
@@ -50,6 +52,7 @@ struct ofl_exp_stateful_table_config {
 
 struct ofl_exp_set_extractor {
     uint8_t table_id;
+    uint8_t bit;
     uint32_t field_count;
     uint32_t fields[OFPSC_MAX_FIELD_COUNT];
 };
@@ -88,13 +91,13 @@ struct ofl_exp_msg_pkttmp_mod {
 };
 
 struct ofl_exp_add_pkttmp {
-	uint32_t pkttmp_id;
-	size_t data_length;
-	uint8_t *data;
+    uint32_t pkttmp_id;
+    size_t data_length;
+    uint8_t *data;
 };
 
 struct ofl_exp_del_pkttmp {
-	uint32_t pkttmp_id;
+    uint32_t pkttmp_id;
 };
 
 /************************
@@ -108,18 +111,18 @@ struct ofl_exp_msg_event_mod {
 };
 
 struct ofl_exp_add_event_mod {
-	uint32_t event_id;
+    uint32_t event_id;
     enum ofp_event_type event_type; /* one of enum ofp_event_type */
     uint8_t payload[19]; //Ugly Size
 };
 
 struct ofl_exp_del_event_mod {
-	uint32_t event_id;
+    uint32_t event_id;
 };
 
 struct ofl_exp_event_port_state {
-	uint32_t port_no; /*Port number to track for state changes */
-	uint32_t state; /* Bitmap of OFPPS_* flags which trigger the event */
+    uint32_t port_no; /*Port number to track for state changes */
+    uint32_t state; /* Bitmap of OFPPS_* flags which trigger the event */
     enum ofp_event_reaction_type react_type; /* one of ofp_event_reaction_type */
     uint8_t payload[10]; //Ugly Size calculate properly
 };
@@ -143,6 +146,7 @@ struct ofl_exp_state_stats {
     uint8_t                         table_id;      /* ID of table flow came from. */
     uint32_t                        duration_sec;  /* Time state entry has been alive in secs. */
     uint32_t                        duration_nsec; /* Time state entry has been alive in nsecs beyond duration_sec. */
+    //TODO Davide: we could avoid storing field_count and fields[] within each state entry (the controller already knows the lookup-scope!)
     uint32_t                        field_count;    /*number of extractor fields*/
     uint32_t                        fields[OFPSC_MAX_FIELD_COUNT]; /*extractor fields*/
     uint32_t                        hard_rollback;
@@ -199,6 +203,7 @@ struct ofl_exp_action_set_state {
     uint32_t idle_rollback;
     uint32_t hard_timeout;
     uint32_t idle_timeout;
+    uint8_t bit;
 };
 
 struct ofl_exp_action_set_global_state {
@@ -208,22 +213,27 @@ struct ofl_exp_action_set_global_state {
     uint32_t global_state_mask;
 };
 
+struct ofl_exp_action_inc_state {
+    struct ofl_exp_beba_act_header header; /* OFPAT_EXP_INC_STATE */
+
+    uint8_t table_id;
+};
 
 /*************************************************************************/
-/*                        experimenter state table						 */
+/*                        experimenter state table                         */
 /*************************************************************************/
 
 
 struct key_extractor {
     uint8_t                     table_id;
+    uint8_t                     bit;
     uint32_t                    field_count;
     uint32_t                    fields[MAX_EXTRACTION_FIELD_COUNT];
+    uint32_t                    key_len;
 };
 
 struct state_entry {
     struct hmap_node            hmap_node;
-    struct hmap_node            hard_node;
-    struct hmap_node            idle_node;
     uint8_t             key[MAX_STATE_KEY_LEN];
     uint32_t                state;
     struct ofl_exp_state_stats   *stats;
@@ -234,12 +244,15 @@ struct state_entry {
 };
 
 struct state_table {
-    struct key_extractor        read_key;
-    struct key_extractor        write_key;
+    struct key_extractor        lookup_key_extractor;
+    struct key_extractor        update_key_extractor;
+    struct key_extractor        bit_update_key_extractor;
     struct hmap                 state_entries;
-    struct hmap                 hard_entries;
-    struct hmap                 idle_entries;
     struct state_entry          default_state_entry;
+    struct state_entry          null_state_entry;
+    struct state_entry *        last_lookup_state_entry;
+    bool                        update_scope_is_eq_lookup_scope;
+    bool                        bit_update_scope_is_eq_lookup_scope;
     uint8_t stateful;
 };
 
@@ -260,32 +273,36 @@ struct ofl_exp_msg_notify_state_change {
 
 /* State Sync: Notify the controller about a flow change. */
 struct ofl_exp_msg_notify_flow_change {
-    struct   ofl_exp_beba_msg_header header;
-
-    uint32_t ntf_type;
+    struct ofl_exp_beba_msg_header header;
     uint32_t table_id;
+    uint32_t ntf_type;
     struct   ofl_match_header  *match;
     uint32_t instruction_num;
     uint32_t * instructions;
 };
 
 /*experimenter table functions*/
+int __extract_key(uint8_t *, struct key_extractor *, struct packet *);
+
 struct state_table *
 state_table_create(void);
 
 void
 state_table_destroy(struct state_table *);
 
-uint8_t
-state_table_is_stateful(struct state_table *);
-
-bool state_table_is_configured(struct state_table *table);
+bool state_table_is_enabled(struct state_table *table);
 
 struct state_entry *
 state_table_lookup(struct state_table*, struct packet *);
 
 void
-state_table_write_state(struct state_entry *, struct packet *);
+state_table_write_state_header(struct state_entry *, struct ofl_match_tlv *);
+
+bool
+extractors_are_equal(struct key_extractor *ke1, struct key_extractor *ke2);
+
+void
+state_table_flush(struct state_table *table, uint64_t now_us);
 
 /*
  * State Sync: One extra argument (i.e., ntf_message) is passed at the end of this function.
@@ -294,13 +311,16 @@ ofl_err
 state_table_set_state(struct state_table *, struct packet *, struct ofl_exp_set_flow_state *msg, struct ofl_exp_action_set_state *act, struct ofl_exp_msg_notify_state_change * ntf_message);
 
 ofl_err
+state_table_inc_state(struct state_table *, struct packet *);
+
+ofl_err
+state_table_configure_stateful(struct state_table *table, uint8_t stateful);
+
+ofl_err
 state_table_set_extractor(struct state_table *, struct key_extractor *, int);
 
 ofl_err
 state_table_del_state(struct state_table *, uint8_t *, uint32_t);
-
-void
-state_table_timeout(struct state_table *table);
 
 /*experimenter message functions*/
 
@@ -314,7 +334,7 @@ int
 ofl_exp_beba_msg_free(struct ofl_msg_experimenter *msg);
 
 char *
-ofl_exp_beba_msg_to_string(struct ofl_msg_experimenter const *msg);
+ofl_exp_beba_msg_to_string(struct ofl_msg_experimenter const *msg, struct ofl_exp const *exp);
 
 /*experimenter action functions*/
 
@@ -397,7 +417,10 @@ handle_stats_request_global_state(struct pipeline *pl, const struct sender *send
 
 void
 state_table_stats(struct state_table *table, struct ofl_exp_msg_multipart_request_state *msg,
-                 struct ofl_exp_state_stats ***stats, size_t *stats_size, size_t *stats_num, uint8_t table_id);
+                 struct ofl_exp_state_stats ***stats, size_t *stats_size, size_t *stats_num, uint8_t table_id, bool delete_entries);
+
+void
+state_table_delete_states(struct state_table *table);
 
 size_t
 ofl_structs_state_stats_pack(struct ofl_exp_state_stats const *src, uint8_t *dst, struct ofl_exp const *exp);
@@ -454,28 +477,28 @@ ofl_exp_beba_error_to_string(struct ofl_msg_exp_error const *msg);
 void
 ofl_exp_stats_type_print(FILE *stream, uint32_t type);
 
-void
+struct ofl_match_tlv *
 ofl_structs_match_exp_put8(struct ofl_match *match, uint32_t header, uint32_t experimenter_id, uint8_t value);
 
-void
+struct ofl_match_tlv *
 ofl_structs_match_exp_put8m(struct ofl_match *match, uint32_t header, uint32_t experimenter_id, uint8_t value, uint8_t mask);
 
-void
+struct ofl_match_tlv *
 ofl_structs_match_exp_put16(struct ofl_match *match, uint32_t header, uint32_t experimenter_id, uint16_t value);
 
-void
+struct ofl_match_tlv *
 ofl_structs_match_exp_put16m(struct ofl_match *match, uint32_t header, uint32_t experimenter_id, uint16_t value, uint16_t mask);
 
-void
+struct ofl_match_tlv *
 ofl_structs_match_exp_put32(struct ofl_match *match, uint32_t header, uint32_t experimenter_id, uint32_t value);
 
-void
+struct ofl_match_tlv *
 ofl_structs_match_exp_put32m(struct ofl_match *match, uint32_t header, uint32_t experimenter_id, uint32_t value, uint32_t mask);
 
-void
+struct ofl_match_tlv *
 ofl_structs_match_exp_put64(struct ofl_match *match, uint32_t header, uint32_t experimenter_id, uint64_t value);
 
-void
+struct ofl_match_tlv *
 ofl_structs_match_exp_put64m(struct ofl_match *match, uint32_t header, uint32_t experimenter_id, uint64_t value, uint64_t mask);
 
 /*************************************************************************/
@@ -487,27 +510,27 @@ struct ofl_exp_beba_instr_header {
 };
 
 struct ofl_exp_instruction_in_switch_pkt_gen {
-	struct ofl_exp_beba_instr_header  header; /* OFPIT_EXP_IN_SWITCH_PKT_GEN*/
-	uint32_t				          pkttmp_id;
-	size_t                     	      actions_num;
-	struct ofl_action_header        **actions;
+    struct ofl_exp_beba_instr_header  header; /* OFPIT_EXP_IN_SWITCH_PKT_GEN*/
+    uint32_t                          pkttmp_id;
+    size_t                               actions_num;
+    struct ofl_action_header        **actions;
 };
 
 struct ofl_exp_instruction_port_mod {
-	struct ofl_exp_beba_instr_header  header; /* OFPIT_EXP_PORT_MOD*/
-	uint32_t				          port_no;
-	uint32_t                          config;               /* Bitmap of OFPPC_* flags. */
-	uint32_t                          mask;                 /* Bitmap of OFPPC_* flags to be changed. */
+    struct ofl_exp_beba_instr_header  header; /* OFPIT_EXP_PORT_MOD*/
+    uint32_t                          port_no;
+    uint32_t                          config;               /* Bitmap of OFPPC_* flags. */
+    uint32_t                          mask;                 /* Bitmap of OFPPC_* flags to be changed. */
 };
 
 /*************************************************************************/
-/*                        experimenter pkttmp table						 */
+/*                        experimenter pkttmp table                         */
 /*************************************************************************/
 
 struct pkttmp_table {
     struct datapath  *dp;
-	//struct ofl_msg_multipart_reply_group_features *features;
-	size_t            entries_num;
+    //struct ofl_msg_multipart_reply_group_features *features;
+    size_t            entries_num;
     struct hmap       entries;
 };
 
@@ -543,12 +566,12 @@ handle_pkttmp_mod(struct pipeline *pl, struct ofl_exp_msg_pkttmp_mod *msg,
                                                 const struct sender *sender);
 
 /*************************************************************************/
-/*                        experimenter portfail table					*/
+/*                        experimenter portfail table                    */
 /*************************************************************************/
 
 struct portfail_table {
     struct datapath  *dp;
-	size_t            entries_num;
+    size_t            entries_num;
     struct hmap       entries;
 };
 
@@ -585,5 +608,76 @@ get_experimenter_id_from_match(struct ofl_match const *flow_mod_match);
 
 uint32_t
 get_experimenter_id_from_action(struct ofl_instruction_actions const *act);
+
+/*experimenter match fields*/
+
+static inline void
+oxm_put_exp_header(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id)
+{
+    uint32_t n_header = htonl(header);
+    ofpbuf_put(buf, &n_header, sizeof n_header);
+    ofpbuf_put(buf, &experimenter_id, EXP_ID_LEN);
+
+}
+
+static inline void
+oxm_put_exp_8(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id, uint8_t value)
+{
+    oxm_put_exp_header(buf, header, experimenter_id);
+    ofpbuf_put(buf, &value, sizeof value);
+}
+
+static inline void
+oxm_put_exp_8w(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id, uint8_t value, uint8_t mask)
+{
+    oxm_put_exp_header(buf, header, experimenter_id);
+    ofpbuf_put(buf, &value, sizeof value);
+    ofpbuf_put(buf, &mask, sizeof mask);
+}
+
+static inline void
+oxm_put_exp_16(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id, uint16_t value)
+{
+    oxm_put_exp_header(buf, header, experimenter_id);
+    ofpbuf_put(buf, &value, sizeof value);
+}
+
+static inline void
+oxm_put_exp_16w(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id, uint16_t value, uint16_t mask)
+{
+    oxm_put_exp_header(buf, header, experimenter_id);
+    ofpbuf_put(buf, &value, sizeof value);
+    ofpbuf_put(buf, &mask, sizeof mask);
+}
+
+static inline void
+oxm_put_exp_32(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id, uint32_t value)
+{
+    oxm_put_exp_header(buf, header, experimenter_id);
+    ofpbuf_put(buf, &value, sizeof value);
+}
+
+static inline void
+oxm_put_exp_32w(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id, uint32_t value, uint32_t mask)
+{
+    oxm_put_exp_header(buf, header, experimenter_id);
+    ofpbuf_put(buf, &value, sizeof value);
+    ofpbuf_put(buf, &mask, sizeof mask);
+}
+
+static inline void
+oxm_put_exp_64(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id, uint64_t value)
+{
+    oxm_put_exp_header(buf, header, experimenter_id);
+    ofpbuf_put(buf, &value, sizeof value);
+}
+
+static inline void
+oxm_put_exp_64w(struct ofpbuf *buf, uint32_t header, uint32_t experimenter_id, uint64_t value, uint64_t mask)
+{
+    oxm_put_exp_header(buf, header, experimenter_id);
+    ofpbuf_put(buf, &value, sizeof value);
+    ofpbuf_put(buf, &mask, sizeof mask);
+}
 
 #endif /* OFL_EXP_BEBA_H */

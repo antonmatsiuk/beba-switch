@@ -183,6 +183,7 @@ dp_new(void)
     dp->generation_id = -1;
 
     dp->last_timeout = time_now();
+    dp->next_state_table_flush = time_now() + BEBA_STATE_FLUSH_INTERVAL;
     list_init(&dp->remotes);
     dp->listeners = NULL;
     dp->n_listeners = 0;
@@ -223,6 +224,53 @@ dp_new(void)
     return dp;
 }
 
+void
+dp_destroy(struct datapath * dp) {
+    struct remote *r;
+    struct sw_port *p;
+    int i;
+
+    free(dp->mfr_desc);
+    free(dp->hw_desc);
+    free(dp->sw_desc);
+    free(dp->dp_desc);
+    free(dp->serial_num);
+
+    //TODO free dp->buffers
+
+    for (i = 0; i < dp->n_listeners; i++) {
+        struct pvconn *pvconn = dp->listeners[i];
+        free(pvconn);
+    }
+    dp->n_listeners = 0;
+    free(dp->listeners);
+
+    for (i = 0; i < dp->n_listeners_aux; i++) {
+        struct pvconn *pvconn = dp->listeners_aux[i];
+        free(pvconn);
+    }
+    dp->n_listeners_aux = 0;
+    free(dp->listeners_aux);
+
+    //TODO free remotes
+    /*LIST_FOR_EACH (r, struct remote, node, &dp->remotes) {
+        remote_destroy(r);
+    }*/
+
+    //TODO free remotes
+    /*LIST_FOR_EACH (p, struct sw_port, node, &dp->port_list) {
+        if (IS_HW_PORT(p)) {
+            continue;
+        }
+        netdev_close(p->netdev);
+    }*/
+
+    pipeline_destroy(dp->pipeline);
+    group_table_destroy(dp->groups);
+    meter_table_destroy(dp->meters);
+    pkttmp_table_destroy(dp->pkttmps);
+    free(dp);
+}
 
 void
 dp_add_pvconn(struct datapath *dp, struct pvconn *pvconn, struct pvconn *pvconn_aux) {
@@ -236,7 +284,7 @@ dp_add_pvconn(struct datapath *dp, struct pvconn *pvconn, struct pvconn *pvconn_
 }
 
 void
-dp_run(struct datapath *dp) {
+dp_run(struct datapath *dp, int nrun) {
     time_t now = time_now();
     struct remote *r, *rn;
     size_t i;
@@ -247,39 +295,48 @@ dp_run(struct datapath *dp) {
         pipeline_timeout(dp->pipeline);
     }
 
-    poll_timer_wait(100);
-    dp_ports_run(dp);
-
-    /* Talk to remotes. */
-    LIST_FOR_EACH_SAFE (r, rn, struct remote, node, &dp->remotes) {
-        remote_run(dp, r);
+    if (now >= dp->next_state_table_flush){
+        dp->next_state_table_flush = now + BEBA_STATE_FLUSH_INTERVAL;
+        pipeline_flush_state_tables(dp->pipeline, now*1000000);
     }
 
-    for (i = 0; i < dp->n_listeners; ) {
-        struct pvconn *pvconn = dp->listeners[i];
-        struct vconn *new_vconn;
+    poll_set_timer_wait(100);
 
-        int retval = pvconn_accept(pvconn, OFP_VERSION, &new_vconn);
-        if (!retval) {
-            struct rconn * rconn_aux = NULL;
-            if (dp->n_listeners_aux && dp->listeners_aux[i] != NULL) {
-                struct pvconn *pvconn_aux = dp->listeners_aux[i];
-                struct vconn *new_vconn_aux;
-                int retval_aux = pvconn_accept(pvconn_aux, OFP_VERSION, &new_vconn_aux);
-                if (!retval_aux)
-                    rconn_aux = rconn_new_from_vconn("passive_aux", new_vconn_aux);
-            }
-            remote_create(dp, rconn_new_from_vconn("passive", new_vconn), rconn_aux);
-        }
-        else if (retval != EAGAIN) {
-            VLOG_WARN_RL(LOG_MODULE, &rl, "accept failed (%s)", strerror(retval));
-            dp->listeners[i] = dp->listeners[--dp->n_listeners];
-            if (dp->n_listeners_aux) {
-                dp->listeners_aux[i] = dp->listeners_aux[--dp->n_listeners_aux];
-            }
-            continue;
-        }
-        i++;
+    dp_ports_run(dp, nrun);
+
+    DP_RELAX_WITH(nrun)
+    {
+	    /* Talk to remotes. */
+	    LIST_FOR_EACH_SAFE (r, rn, struct remote, node, &dp->remotes) {
+		remote_run(dp, r);
+	    }
+
+	    for (i = 0; i < dp->n_listeners; ) {
+		struct pvconn *pvconn = dp->listeners[i];
+		struct vconn *new_vconn;
+
+		int retval = pvconn_accept(pvconn, OFP_VERSION, &new_vconn);
+		if (!retval) {
+		    struct rconn * rconn_aux = NULL;
+		    if (dp->n_listeners_aux && dp->listeners_aux[i] != NULL) {
+			struct pvconn *pvconn_aux = dp->listeners_aux[i];
+			struct vconn *new_vconn_aux;
+			int retval_aux = pvconn_accept(pvconn_aux, OFP_VERSION, &new_vconn_aux);
+			if (!retval_aux)
+			    rconn_aux = rconn_new_from_vconn("passive_aux", new_vconn_aux);
+		    }
+		    remote_create(dp, rconn_new_from_vconn("passive", new_vconn), rconn_aux);
+		}
+		else if (retval != EAGAIN) {
+		    VLOG_WARN_RL(LOG_MODULE, &rl, "accept failed (%s)", strerror(retval));
+		    dp->listeners[i] = dp->listeners[--dp->n_listeners];
+		    if (dp->n_listeners_aux) {
+			dp->listeners_aux[i] = dp->listeners_aux[--dp->n_listeners_aux];
+		    }
+		    continue;
+		}
+		i++;
+	    }
     }
 }
 
@@ -433,7 +490,7 @@ remote_create(struct datapath *dp, struct rconn *rconn, struct rconn *rconn_aux)
 
 
 void
-dp_wait(struct datapath *dp)
+dp_wait(struct datapath *dp, int nrun)
 {
     struct sw_port *p;
     struct remote *r;
@@ -445,11 +502,15 @@ dp_wait(struct datapath *dp)
         }
         netdev_recv_wait(p->netdev);
     }
-    LIST_FOR_EACH (r, struct remote, node, &dp->remotes) {
-        remote_wait(r);
-    }
-    for (i = 0; i < dp->n_listeners; i++) {
-        pvconn_wait(dp->listeners[i]);
+
+    DP_RELAX_WITH(nrun)
+    {
+	    LIST_FOR_EACH (r, struct remote, node, &dp->remotes) {
+		remote_wait(r);
+	    }
+	    for (i = 0; i < dp->n_listeners; i++) {
+		pvconn_wait(dp->listeners[i]);
+	    }
     }
 }
 

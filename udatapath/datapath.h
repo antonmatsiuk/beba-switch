@@ -64,6 +64,8 @@ struct sender;
  * The datapath
  ****************************************************************************/
 
+#define DP_RELAX_FACTOR_MASK	((1UL << BEBA_CTRL_PLANE_RELAX)-1)
+#define DP_RELAX_WITH(n)	if ((n & DP_RELAX_FACTOR_MASK)== 0)
 
 struct datapath
 {
@@ -90,6 +92,7 @@ struct datapath
     struct pvconn **listeners_aux;
     size_t n_listeners_aux;
     time_t last_timeout;
+    time_t next_state_table_flush;
 
     struct dp_buffers *buffers;
 
@@ -164,19 +167,23 @@ struct remote {
 struct datapath *
 dp_new(void);
 
+/* Destroy a datapath */
+void
+dp_destroy(struct datapath *);
+
 void
 dp_add_pvconn(struct datapath *dp, struct pvconn *pvconn, struct pvconn *pvconn_aux);
 
 /* Executes the datapath. The datapath works if this function is run
  * repeatedly. */
 void
-dp_run(struct datapath *dp);
+dp_run(struct datapath *dp, int run);
 
 /* This function should be called after dp_run. It sets up polling on all
  * event sources (listeners, remotes, ...), so that poll_block() will block
  * until an event occurs on any source. */
 void
-dp_wait(struct datapath *dp);
+dp_wait(struct datapath *dp, int run);
 
 
 /* Setter functions for various datapath fields */

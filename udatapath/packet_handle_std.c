@@ -47,76 +47,118 @@
 #include "dp_capabilities.h"
 #include "oflib-exp/ofl-exp-beba.h"
 
+#include "../config.h"
+
 
 int packet_parse(struct packet const *pkt, struct ofl_match *, struct protocols_std *proto);
 
 int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols_std *proto)
 {
 	size_t offset = 0;
+	uint16_t eth_type = 0x0000;
         uint8_t next_proto = 0;
 
 	/* Resets all protocol fields to NULL */
 
 	protocol_reset(proto);
 
+#ifdef SKIP_TRILL
+	/* Optional functionality that removes TRILL encapsulation in live trials. */
+	size_t search_offset = 0;
+
+	/* Search for network layer protocol or TRILL header. */
+	if (pkt->buffer->size > search_offset + sizeof(struct eth_header)) {
+		struct eth_header* outer_eth = (struct eth_header *)((uint8_t const *) pkt->buffer->data + search_offset);
+		search_offset += sizeof(struct eth_header);
+		uint16_t outer_type = ntohs(outer_eth->eth_type);
+		while ((outer_type >= ETH_TYPE_II_START) && (
+				(outer_type == ETH_TYPE_VLAN) ||
+				(outer_type == ETH_TYPE_SVLAN) ||
+				(outer_type == ETH_TYPE_VLAN_QinQ) ||
+				(outer_type == ETH_TYPE_VLAN_PBB_B) ||
+				(outer_type == ETH_TYPE_VLAN_PBB_S)
+			) && (pkt->buffer->size > search_offset + sizeof(struct vlan_header))
+		)	{
+			/* Skip VLANs */
+			struct vlan_header* outer_vlan = (struct vlan_header *)((uint8_t const *) pkt->buffer->data + search_offset);
+			search_offset += sizeof(struct vlan_header);
+			outer_type = ntohs(outer_vlan->vlan_next_type);
+		}
+		if (outer_type == ETH_TYPE_TRILL) {
+			uint8_t const *trill = (uint8_t const *) pkt->buffer->data;
+			uint16_t o1 = (trill[search_offset] & 0x07) << 2;
+			uint16_t o2 = (trill[search_offset + 1] & 0xc0) >> 2;
+			uint16_t trill_options = o1 | o2;
+			offset = search_offset + 6 + trill_options * 4;
+		}
+	}
+#endif
+
         /* Ethernet */
 
-        if (pkt->buffer->size < offset + sizeof(struct eth_header)) {
+	if (unlikely(pkt->buffer->size < offset + sizeof(struct eth_header))) {
             return -1;
         }
 
         proto->eth = (struct eth_header *)((uint8_t const *) pkt->buffer->data + offset);
         offset += sizeof(struct eth_header);
 
-        if (ntohs(proto->eth->eth_type) >= ETH_TYPE_II_START) {
+	eth_type = ntohs(proto->eth->eth_type);
+
+        if (eth_type >= ETH_TYPE_II_START) {
             /* Ethernet II */
             ofl_structs_match_put_eth(m, OXM_OF_ETH_SRC, proto->eth->eth_src);
             ofl_structs_match_put_eth(m, OXM_OF_ETH_DST, proto->eth->eth_dst);
-            ofl_structs_match_put16(m, OXM_OF_ETH_TYPE, ntohs(proto->eth->eth_type));
+            if (eth_type != ETH_TYPE_VLAN &&
+                eth_type != ETH_TYPE_VLAN_PBB) {
+                ofl_structs_match_put16(m, OXM_OF_ETH_TYPE, eth_type);
+            };
 
         } else {
 
             /* Ethernet 802.3 */
             struct llc_header const *llc;
 
-            if (pkt->buffer->size < offset + sizeof(struct llc_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct llc_header))) {
                 return -1;
             }
 
             llc = (struct llc_header const *)((uint8_t const *)pkt->buffer->data + offset);
             offset += sizeof(struct llc_header);
 
-            if (!(llc->llc_dsap == LLC_DSAP_SNAP &&
+		if (unlikely(!(llc->llc_dsap == LLC_DSAP_SNAP &&
                   llc->llc_ssap == LLC_SSAP_SNAP &&
-                  llc->llc_cntl == LLC_CNTL_SNAP)) {
+			  llc->llc_cntl == LLC_CNTL_SNAP))) {
                 return -1;
             }
 
-            if (pkt->buffer->size < offset + sizeof(struct snap_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct snap_header))) {
                 return -1;
             }
 
             proto->eth_snap = (struct snap_header *)((uint8_t const *) pkt->buffer->data + offset);
             offset += sizeof(struct snap_header);
 
-            if (memcmp(proto->eth_snap->snap_org, SNAP_ORG_ETHERNET,
-                                            sizeof(SNAP_ORG_ETHERNET)) != 0) {
+		if (unlikely(memcmp(proto->eth_snap->snap_org, SNAP_ORG_ETHERNET,
+				   sizeof(SNAP_ORG_ETHERNET)) != 0)) {
                 return -1;
             }
 
+	    eth_type = ntohs(proto->eth->eth_type);
+
             ofl_structs_match_put_eth(m, OXM_OF_ETH_SRC, proto->eth->eth_src);
             ofl_structs_match_put_eth(m, OXM_OF_ETH_DST, proto->eth->eth_dst);
-            ofl_structs_match_put16 (m, OXM_OF_ETH_TYPE, ntohs(proto->eth->eth_type));
+            ofl_structs_match_put16 (m, OXM_OF_ETH_TYPE, eth_type);
         }
 
         /* VLAN */
-        if (ntohs(proto->eth->eth_type) == ETH_TYPE_VLAN ||
-            ntohs(proto->eth->eth_type) == ETH_TYPE_VLAN_PBB) {
+        if (eth_type == ETH_TYPE_VLAN ||
+            eth_type == ETH_TYPE_VLAN_PBB) {
 
             uint16_t vlan_id;
             uint8_t vlan_pcp;
 
-            if (pkt->buffer->size < offset + sizeof(struct vlan_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct vlan_header))) {
                 return -1;
             }
             proto->vlan = (struct vlan_header *)((uint8_t const *) pkt->buffer->data + offset);
@@ -130,29 +172,35 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
             ofl_structs_match_put8(m, OXM_OF_VLAN_PCP, vlan_pcp);
 
             // Note: DL type is updated
-            ofl_structs_match_put16(m, OXM_OF_ETH_TYPE,
-                                           ntohs(proto->vlan->vlan_next_type));
+	    eth_type = ntohs(proto->vlan->vlan_next_type);
+            if (eth_type != ETH_TYPE_VLAN &&
+                eth_type != ETH_TYPE_VLAN_PBB) {
+                ofl_structs_match_put16(m, OXM_OF_ETH_TYPE, eth_type);
+            };
 
         }
 
         /* skip through rest of VLAN tags */
-        while (ntohs(proto->eth->eth_type) == ETH_TYPE_VLAN ||
-               ntohs(proto->eth->eth_type) == ETH_TYPE_VLAN_PBB) {
+        while (eth_type == ETH_TYPE_VLAN ||
+               eth_type == ETH_TYPE_VLAN_PBB) {
 
-            if (pkt->buffer->size < offset + sizeof(struct vlan_header)) {
+	    if (unlikely(pkt->buffer->size < offset + sizeof(struct vlan_header))) {
                 return -1;
             }
             proto->vlan_last = (struct vlan_header *)((uint8_t const *) pkt->buffer->data + offset);
             offset += sizeof(struct vlan_header);
 
-            ofl_structs_match_put16(m, OXM_OF_ETH_TYPE,
-                                           ntohs(proto->vlan->vlan_next_type));
+	    eth_type = ntohs(proto->vlan->vlan_next_type);
+            if (eth_type != ETH_TYPE_VLAN &&
+                eth_type != ETH_TYPE_VLAN_PBB) {
+                ofl_structs_match_put16(m, OXM_OF_ETH_TYPE, eth_type);
+            };
         }
 
         /* PBB ISID */
-        if (ntohs(proto->eth->eth_type) == ETH_TYPE_PBB){
+        if (eth_type == ETH_TYPE_PBB){
             uint32_t isid;
-            if (pkt->buffer->size < offset + sizeof(struct pbb_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct pbb_header))) {
                 return -1;
             }
             proto->pbb = (struct pbb_header*) ((uint8_t const *) pkt->buffer->data + offset);
@@ -164,12 +212,12 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
             return 0;
         }
 
-        if (ntohs(proto->eth->eth_type) == ETH_TYPE_MPLS ||
-            ntohs(proto->eth->eth_type) == ETH_TYPE_MPLS_MCAST) {
+        if (eth_type == ETH_TYPE_MPLS ||
+            eth_type == ETH_TYPE_MPLS_MCAST) {
             uint32_t mpls_label;
             uint32_t mpls_tc;
             uint32_t mpls_bos;
-            if (pkt->buffer->size < offset + sizeof(struct mpls_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct mpls_header))) {
                 return -1;
             }
             proto->mpls = (struct mpls_header *)((uint8_t const *) pkt->buffer->data + offset);
@@ -189,8 +237,8 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
         }
 
         /* ARP */
-        if (ntohs(proto->eth->eth_type) == ETH_TYPE_ARP) {
-            if (pkt->buffer->size < offset + sizeof(struct arp_eth_header)) {
+        if (eth_type == ETH_TYPE_ARP) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct arp_eth_header))) {
                 return -1;
             }
             proto->arp = (struct arp_eth_header *)((uint8_t const *) pkt->buffer->data + offset);
@@ -221,8 +269,8 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
             return 0;
         }
         /* Network Layer */
-        else if (ntohs(proto->eth->eth_type) == ETH_TYPE_IP) {
-            if (pkt->buffer->size < offset + sizeof(struct ip_header)) {
+        else if (eth_type == ETH_TYPE_IP) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct ip_header))) {
                 return -1;
             }
 
@@ -243,9 +291,9 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
             }
             next_proto = proto->ipv4->ip_proto;
         }
-        else if (ntohs(proto->eth->eth_type) == ETH_TYPE_IPV6){
+        else if (eth_type == ETH_TYPE_IPV6){
             uint32_t ipv6_fl;
-            if (pkt->buffer->size < offset + sizeof(struct ipv6_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct ipv6_header))) {
                 return -1;
             }
             proto->ipv6 = (struct ipv6_header *)((uint8_t const *) pkt->buffer->data + offset);
@@ -271,7 +319,7 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
 
         /* Transport */
         if (next_proto== IP_TYPE_TCP) {
-            if (pkt->buffer->size < offset + sizeof(struct tcp_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct tcp_header))) {
                 return -1;
             }
             proto->tcp = (struct tcp_header *)((uint8_t const *) pkt->buffer->data + offset);
@@ -282,11 +330,13 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
             ofl_structs_match_put16(m, OXM_OF_TCP_DST,
                                                 ntohs(proto->tcp->tcp_dst));
 
+            uint16_t maskedFlags = ntohs(proto->tcp->tcp_ctl) & 0x1ff;
+            ofl_structs_match_put16(m, OXM_OF_TCP_FLAGS, maskedFlags);
             return 0;
         }
         else if (next_proto == IP_TYPE_UDP) {
 
-            if (pkt->buffer->size < offset + sizeof(struct udp_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct udp_header))) {
                 return -1;
             }
             proto->udp = (struct udp_header *)((uint8_t const *) pkt->buffer->data + offset);
@@ -302,7 +352,7 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
         }
         else if (next_proto == IP_TYPE_ICMP) {
 
-            if (pkt->buffer->size < offset + sizeof(struct icmp_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct icmp_header))) {
                 return -1;
             }
             proto->icmp = (struct icmp_header *)((uint8_t const *) pkt->buffer->data + offset);
@@ -317,7 +367,7 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
         }
         else if (next_proto == IPV6_TYPE_ICMPV6) {
 
-            if (pkt->buffer->size < offset + sizeof(struct icmp_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct icmp_header))) {
                 return -1;
             }
             proto->icmp = (struct icmp_header *)((uint8_t const *) pkt->buffer->data + offset);
@@ -333,7 +383,7 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
                                     proto->icmp->icmp_type == ICMPV6_NEIGHADV){
                 struct ipv6_nd_header *nd;
                 struct ipv6_nd_options_hd *opt;
-                if (pkt->buffer->size < offset + sizeof(struct ipv6_nd_header)){
+			if (unlikely(pkt->buffer->size < offset + sizeof(struct ipv6_nd_header))) {
                     return -1;
                 }
                 nd = (struct ipv6_nd_header*) ((uint8_t const *) pkt->buffer->data + offset);
@@ -341,7 +391,7 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
                 ofl_structs_match_put_ipv6(m, OXM_OF_IPV6_ND_TARGET,
                         nd->target_addr.s6_addr);
 
-                if (pkt->buffer->size < offset + IPV6_ND_OPT_HD_LEN){
+			if (unlikely(pkt->buffer->size < offset + IPV6_ND_OPT_HD_LEN)) {
                     return -1;
                 }
                 opt = (struct ipv6_nd_options_hd*)((uint8_t const *) pkt->buffer->data + offset);
@@ -368,7 +418,7 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
         }
         else if (next_proto == IP_TYPE_SCTP) {
 
-            if (pkt->buffer->size < offset + sizeof(struct sctp_header)) {
+		if (unlikely(pkt->buffer->size < offset + sizeof(struct sctp_header))) {
                 return -1;
             }
             proto->sctp = (struct sctp_header *)((uint8_t const *)pkt->buffer->data + offset);
@@ -384,6 +434,7 @@ int packet_parse(struct packet const *pkt, struct ofl_match *m, struct protocols
 
         return -1;
 }
+
 
 void
 packet_handle_std_validate(struct packet_handle_std *handle) {
@@ -408,6 +459,7 @@ packet_handle_std_validate(struct packet_handle_std *handle) {
         tunnel_id = *(uint64_t *)(f->value);
     }
 
+    #if BEBA_STATE_ENABLED != 0
     HMAP_FOR_EACH_WITH_HASH(f, struct ofl_match_tlv, hmap_node,
         hash_int(OXM_EXP_STATE,0), & handle->match.match_fields){
         state = *(uint32_t *)(f->value + EXP_ID_LEN);
@@ -418,16 +470,22 @@ packet_handle_std_validate(struct packet_handle_std *handle) {
 	hmap_node, hash_int(OXM_EXP_GLOBAL_STATE,0), &handle->match.match_fields){
         current_global_state = *((uint32_t*) (f->value + EXP_ID_LEN));
     }
+    #endif
 
+    if (handle->match.dirty)
+    {
     HMAP_FOR_EACH_SAFE(iter, next, struct ofl_match_tlv, hmap_node, &handle->match.match_fields)
     {
-        free(iter->value);
-        free(iter);
+	if (iter->ownership) {
+        	free(iter->value);
+        	free(iter);
+        }
+    }
     }
 
     ofl_structs_match_init(&handle->match);
 
-    if (packet_parse(handle->pkt, &handle->match, handle->proto) < 0)
+    if (packet_parse(handle->pkt, &handle->match, &handle->proto) < 0)
         return;
 
     handle->valid = true;
@@ -435,6 +493,7 @@ packet_handle_std_validate(struct packet_handle_std *handle) {
     /* Add in_port value to the hash_map */
     ofl_structs_match_put32(&handle->match, OXM_OF_IN_PORT, handle->pkt->in_port);
 
+    #if BEBA_STATE_ENABLED != 0
     /* Add global register value to the hash_map */
     ofl_structs_match_exp_put32(&handle->match, OXM_EXP_GLOBAL_STATE, 0xBEBABEBA, current_global_state);
 
@@ -442,38 +501,61 @@ packet_handle_std_validate(struct packet_handle_std *handle) {
     {
         ofl_structs_match_exp_put32(&handle->match, OXM_EXP_STATE, 0xBEBABEBA, state);
     }
+    #endif
 
     /*Add metadata  and tunnel_id value to the hash_map */
     ofl_structs_match_put64(&handle->match,  OXM_OF_METADATA, metadata);
     ofl_structs_match_put64(&handle->match,  OXM_OF_TUNNEL_ID, tunnel_id);
 }
 
-struct packet_handle_std *
-packet_handle_std_create(struct packet *pkt) {
-	struct packet_handle_std *handle = xmalloc(sizeof(struct packet_handle_std));
-	handle->proto = xmalloc(sizeof(struct protocols_std));
+
+void
+packet_handle_std_init(struct packet_handle_std *handle, struct packet *pkt)
+{
+	// FLAT
+	// handle->proto = xmalloc(sizeof(struct protocols_std));
+
 	handle->pkt = pkt;
 
 	hmap_init(&handle->match.match_fields);
 
 	handle->valid = false;
 	packet_handle_std_validate(handle);
+}
 
+
+struct packet_handle_std *
+packet_handle_std_create(struct packet *pkt)
+{
+	struct packet_handle_std *handle = xmalloc(sizeof(struct packet_handle_std));
+	// FLAT
+	// handle->proto = xmalloc(sizeof(struct protocols_std));
+
+	handle->pkt = pkt;
+
+	hmap_init(&handle->match.match_fields);
+
+	handle->valid = false;
+	packet_handle_std_validate(handle);
 	return handle;
 }
 
+
 struct packet_handle_std *
-packet_handle_std_clone(struct packet *pkt, struct packet_handle_std *handle UNUSED) {
+packet_handle_std_clone(struct packet *pkt, struct packet_handle_std *handle UNUSED)
+{
     struct packet_handle_std *clone = xmalloc(sizeof(struct packet_handle_std));
 
-    clone->pkt = pkt;
-    clone->proto = xmalloc(sizeof(struct protocols_std));
-    hmap_init(&clone->match.match_fields);
-    clone->valid = false;
-    // TODO Zoltan: if handle->valid, then match could be memcpy'd, and protocol
-    //              could be offset
-    packet_handle_std_validate(clone);
+    // FLAT
+    // clone->proto = xmalloc(sizeof(struct protocols_std));
+    //
 
+    clone->pkt = pkt;
+
+    hmap_init(&clone->match.match_fields);
+
+    clone->valid = false;
+    packet_handle_std_validate(clone);
     return clone;
 }
 
@@ -481,27 +563,39 @@ void
 packet_handle_std_destroy(struct packet_handle_std *handle) {
 
     struct ofl_match_tlv * iter, *next;
+
+    if (unlikely(handle->match.dirty))
+    {
     HMAP_FOR_EACH_SAFE(iter, next, struct ofl_match_tlv, hmap_node, &handle->match.match_fields){
-        free(iter->value);
-        free(iter);
+	if (iter->ownership) {
+        	free(iter->value);
+        	free(iter);
+    	}
+    }	
+	handle->match.dirty = false;
     }
-    free(handle->proto);
+
+    // FLAT
+    // free(handle->proto);
+
     hmap_destroy(&handle->match.match_fields);
-    free(handle);
+
+    // FLAT
+    // free(handle);
 }
 
 bool
 packet_handle_std_is_ttl_valid(struct packet_handle_std *handle) {
     packet_handle_std_validate(handle);
 
-    if (handle->proto->mpls != NULL) {
-        uint32_t ttl = ntohl(handle->proto->mpls->fields) & MPLS_TTL_MASK;
+    if (handle->proto.mpls != NULL) {
+        uint32_t ttl = ntohl(handle->proto.mpls->fields) & MPLS_TTL_MASK;
         if (ttl <= 1) {
             return false;
         }
     }
-    if (handle->proto->ipv4 != NULL) {
-        if (handle->proto->ipv4->ip_ttl < 1) {
+    if (handle->proto.ipv4 != NULL) {
+        if (handle->proto.ipv4->ip_ttl < 1) {
             return false;
         }
     }
@@ -513,8 +607,8 @@ packet_handle_std_is_fragment(struct packet_handle_std *handle) {
     packet_handle_std_validate(handle);
 
     return false;
-    /*return ((handle->proto->ipv4 != NULL) &&
-            IP_IS_FRAGMENT(handle->proto->ipv4->ip_frag_off));*/
+    /*return ((handle->proto.ipv4 != NULL) &&
+            IP_IS_FRAGMENT(handle->proto.ipv4->ip_frag_off));*/
 }
 
 
@@ -564,7 +658,7 @@ packet_handle_std_print(FILE *stream, struct packet_handle_std *handle) {
     packet_handle_std_validate(handle);
 
     fprintf(stream, "{proto=");
-    proto_print(stream, handle->proto);
+    proto_print(stream, &handle->proto);
 
     fprintf(stream, ", match=");
     ofl_structs_match_print(stream, (struct ofl_match_header *)(&handle->match), handle->pkt->dp->exp);
